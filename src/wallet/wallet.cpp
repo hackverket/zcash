@@ -1091,20 +1091,45 @@ void CWallet::GetNoteWitnesses(std::vector<JSOutPoint> notes,
                                std::vector<boost::optional<ZCIncrementalWitness>>& witnesses,
                                uint256 &final_anchor)
 {
+    
+                std::cout << "GNW: entering... final anchor is currently " << final_anchor.ToString() << std::endl;
+            std::cout << "GNW: notes size is " << notes.size() << std::endl;
+
     {
         LOCK(cs_wallet);
         witnesses.resize(notes.size());
         boost::optional<uint256> rt;
         int i = 0;
         for (JSOutPoint note : notes) {
+            
+            std::cout << "GNW: Examining note " << i << std::endl;
+
+            std::cout << "GNW: mapWallet.count(note.hash) = " << mapWallet.count(note.hash) << std::endl;
+            std::cout << "GNW: mapWallet[note.hash].mapNoteData.count(note) " << mapWallet[note.hash].mapNoteData.count(note) << std::endl;
+            std::cout << "GNW: mapWallet[note.hash].mapNoteData[note].witnesses.size() " << mapWallet[note.hash].mapNoteData[note].witnesses.size() << std::endl;
+            
             if (mapWallet.count(note.hash) &&
                     mapWallet[note.hash].mapNoteData.count(note) &&
                     mapWallet[note.hash].mapNoteData[note].witnesses.size() > 0) {
+                
+                std::cout << "GNW: in the if block now..." << std::endl;
+                
                 witnesses[i] = mapWallet[note.hash].mapNoteData[note].witnesses.front();
                 if (!rt) {
+                    
+                    std::cout << "GNW: !rt" << std::endl;
+
                     rt = witnesses[i]->root();
+                    
+                    std::cout << "GNW: ...setting rt to witness root" << rt.get().ToString() << std::endl;
+                    
                 } else {
+                    
+                    std::cout << "GNW: rt already set so we use assert to check it is same as witness root" << std::endl;
+                    
                     assert(*rt == witnesses[i]->root());
+                    
+                    std::cout << "GNW: other side of the assert" << std::endl;
                 }
             }
             i++;
@@ -1112,6 +1137,8 @@ void CWallet::GetNoteWitnesses(std::vector<JSOutPoint> notes,
         // All returned witnesses have the same anchor
         if (rt) {
             final_anchor = *rt;
+            
+            std::cout << "GNW: setting final anchor to " << final_anchor.ToString() << std::endl;
         }
     }
 }
