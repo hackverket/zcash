@@ -623,6 +623,8 @@ void CWallet::IncrementNoteWitnesses(const CBlockIndex* pindex,
         for (const CTransaction& tx : pblock->vtx) {
             auto hash = tx.GetTxid();
             bool txIsOurs = mapWallet.count(hash);
+            std::cout << "+++++++++++++++++++++++++++++++++++++ txIsOurs = " << txIsOurs << std::endl;
+            assert(txIsOurs==true);
             for (size_t i = 0; i < tx.vjoinsplit.size(); i++) {
                 const JSDescription& jsdesc = tx.vjoinsplit[i];
                 for (uint8_t j = 0; j < jsdesc.commitments.size(); j++) {

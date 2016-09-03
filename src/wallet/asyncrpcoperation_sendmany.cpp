@@ -846,10 +846,10 @@ Object AsyncRPCOperation_sendmany::perform_joinsplit(AsyncJoinSplitInfo & info, 
             // NOTE: we dont want to do anything, this is just for debugging.
             // Toggle switch if you want to try and make joinsplit with
             // the anchor and witnesses here (it should work, whereas above will fail)
-#if 1
-            std::cout << "Making joinsplit with output from WitnessNoteCommitment() - change switch in code to make it" << std::endl;
+#if 0
+            std::cout << "Making joinsplit with output from WitnessNoteCommitment() - change switch in code to just exit" << std::endl;
 #else
-            std::cout << "Not making joinsplit with output from WitnessNoteCommitment() - change switch in code to just exit instead" << std::endl;
+            std::cout << "Not making joinsplit with output from WitnessNoteCommitment() - change switch in code to make it" << std::endl;
             throw std::runtime_error("GetNoteWitnesses() and WitnessNoteCommitment() not the same");
 #endif
         }
