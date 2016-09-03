@@ -623,8 +623,6 @@ void CWallet::IncrementNoteWitnesses(const CBlockIndex* pindex,
         for (const CTransaction& tx : pblock->vtx) {
             auto hash = tx.GetTxid();
             bool txIsOurs = mapWallet.count(hash);
-            std::cout << "+++++++++++++++++++++++++++++++++++++ txIsOurs = " << txIsOurs << std::endl;
-            assert(txIsOurs==true);
             for (size_t i = 0; i < tx.vjoinsplit.size(); i++) {
                 const JSDescription& jsdesc = tx.vjoinsplit[i];
                 for (uint8_t j = 0; j < jsdesc.commitments.size(); j++) {
@@ -656,7 +654,11 @@ void CWallet::IncrementNoteWitnesses(const CBlockIndex* pindex,
             nWitnessCacheSize += 1;
         }
         if (fFileBacked) {
-            CWalletDB(strWalletFile).WriteWitnessCacheSize(nWitnessCacheSize);
+            CWalletDB walletdb(strWalletFile);
+            for (std::pair<const uint256, CWalletTx>& wtxItem : mapWallet) {
+                walletdb.WriteTx(wtxItem.first, wtxItem.second);
+            }
+            walletdb.WriteWitnessCacheSize(nWitnessCacheSize);
         }
     }
 }
@@ -677,7 +679,11 @@ void CWallet::DecrementNoteWitnesses()
         // TODO: If nWitnessCache is zero, we need to regenerate the caches (#1302)
         assert(nWitnessCacheSize > 0);
         if (fFileBacked) {
-            CWalletDB(strWalletFile).WriteWitnessCacheSize(nWitnessCacheSize);
+            CWalletDB walletdb(strWalletFile);
+            for (std::pair<const uint256, CWalletTx>& wtxItem : mapWallet) {
+                walletdb.WriteTx(wtxItem.first, wtxItem.second);
+            }
+            walletdb.WriteWitnessCacheSize(nWitnessCacheSize);
         }
     }
 }
