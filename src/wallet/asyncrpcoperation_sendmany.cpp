@@ -494,15 +494,19 @@ bool AsyncRPCOperation_sendmany::main_impl() {
                     throw JSONRPCError(RPC_WALLET_ERROR, "Could not find previous JoinSplit anchor");
                 }
                 
+                assert(changeOutputIndex != -1);
+                int n = 0;
                 for (const uint256& commitment : prevJoinSplit.commitments) {
                     tree.append(commitment);
-                    previousCommitments.push_back(commitment);                   
+                    previousCommitments.push_back(commitment);
+
+                    if (n++ == changeOutputIndex) {
+                        ZCIncrementalWitness changeWitness = tree.witness();
+                        jsAnchor = changeWitness.root();
+                        intermediates.insert(std::make_pair(tree.root(), tree));
+                        witnesses.push_back(changeWitness);
+                    }
                 }
-                ZCIncrementalWitness changeWitness = tree.witness();
-                jsAnchor = changeWitness.root();
-                uint256 changeCommitment = prevJoinSplit.commitments[changeOutputIndex];
-                intermediates.insert(std::make_pair(tree.root(), tree));
-                witnesses.push_back(changeWitness);
 
                 // Decrypt the change note's ciphertext to retrieve some data we need
                 ZCNoteDecryption decryptor(spendingkey_.viewing_key());
@@ -885,9 +889,7 @@ Object AsyncRPCOperation_sendmany::perform_joinsplit(
             outputMap,
             info.vpub_old,
             info.vpub_new,
-            !this->testmode,
-            // Temporary fix for #1779 is to disable shuffling of inputs and outputs.
-            GenIdentity);
+            !this->testmode);
 
     if (!(jsdesc.Verify(*pzcashParams, joinSplitPubKey_))) {
         throw std::runtime_error("error verifying joinsplit");
