@@ -12,6 +12,7 @@ export BITCOIND=${REAL_BITCOIND}
 
 testScripts=(
     'wallet_treestate.py'
+    'wallet_witnesscache.py'
     'wallet_protectcoinbase.py'
     'wallet.py'
     'wallet_nullifiers.py'
