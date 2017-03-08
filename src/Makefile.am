@@ -248,6 +248,7 @@ libbitcoin_wallet_a_SOURCES = \
   wallet/asyncrpcoperation_sendmany.cpp \
   wallet/crypter.cpp \
   wallet/db.cpp \
+  wallet/rpcdisclosure.cpp \
   wallet/rpcdump.cpp \
   wallet/rpcwallet.cpp \
   wallet/wallet.cpp \
