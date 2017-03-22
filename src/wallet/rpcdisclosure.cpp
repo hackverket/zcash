@@ -21,6 +21,8 @@
 
 #include <univalue.h>
 
+#include "paymentdisclosure.h"
+
 using namespace std;
 
 void EnsureWalletIsUnlocked();
