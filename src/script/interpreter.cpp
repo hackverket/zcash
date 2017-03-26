@@ -993,7 +993,7 @@ public:
         ::Serialize(s, txTo.vin[nInput].prevout, nType, nVersion);
         // Serialize the script
         assert(nInput != NOT_AN_INPUT);
-        if (nInput != nIn)
+        if (nInput != nIn || nIn >= txTo.vin.size())
             // Blank out other inputs' signatures
             ::Serialize(s, CScript(), nType, nVersion);
         else
@@ -1057,9 +1057,12 @@ public:
 
 uint256 SignatureHash(const CScript& scriptCode, const CTransaction& txTo, unsigned int nIn, int nHashType)
 {
-    if (nIn >= txTo.vin.size() && nIn != NOT_AN_INPUT) {
-        //  nIn out of range
-        throw logic_error("input index is out of range");
+	// Don't perform check for normalized hashes where nIn is set to 0xFFFFFFFFUL
+	if (nIn != 0xFFFFFFFFUL) {
+        if (nIn >= txTo.vin.size() && nIn != NOT_AN_INPUT) {
+            //  nIn out of range
+            throw logic_error("input index is out of range");
+        }
     }
 
     // Check for invalid use of SIGHASH_SINGLE
