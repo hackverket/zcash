@@ -26,6 +26,7 @@ testScripts=(
     'rest.py'
     'mempool_spendcoinbase.py'
     'mempool_coinbase_spends.py'
+    'mempool_tx_input_limit.py'
     'httpbasics.py'
     'zapwallettxes.py'
     'proxy_test.py'
@@ -40,10 +41,10 @@ testScripts=(
     'zcjoinsplit.py'
     'zcjoinsplitdoublespend.py'
     'getblocktemplate.py'
+    'bip65-cltv-p2p.py'
+    'bipdersig-p2p.py'
 );
 testScriptsExt=(
-    'bipdersig-p2p.py'
-    'bipdersig.py'
     'getblocktemplate_longpoll.py'
     'getblocktemplate_proposals.py'
     'pruning.py'
@@ -63,6 +64,10 @@ testScriptsExt=(
 
 if [ "x$ENABLE_ZMQ" = "x1" ]; then
   testScripts+=('zmq_test.py')
+fi
+
+if [ "x$ENABLE_PROTON" = "x1" ]; then
+  testScripts+=('proton_test.py')
 fi
 
 extArg="-extended"

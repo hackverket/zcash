@@ -55,6 +55,9 @@ endif
 if ENABLE_ZMQ
 EXTRA_LIBRARIES += libbitcoin_zmq.a
 endif
+if ENABLE_PROTON
+EXTRA_LIBRARIES += libbitcoin_proton.a
+endif
 
 if BUILD_BITCOIN_LIBS
 lib_LTLIBRARIES = libzcashconsensus.la
@@ -92,6 +95,11 @@ BITCOIN_CORE_H = \
   addrman.h \
   alert.h \
   amount.h \
+  amqp/amqpabstractnotifier.h \
+  amqp/amqpconfig.h \
+  amqp/amqpnotificationinterface.h \
+  amqp/amqppublishnotifier.h \
+  amqp/amqpsender.h \
   arith_uint256.h \
   asyncrpcoperation.h \
   asyncrpcqueue.h \
@@ -116,8 +124,7 @@ BITCOIN_CORE_H = \
   consensus/validation.h \
   core_io.h \
   core_memusage.h \
-  eccryptoverify.h \
-  ecwrapper.h \
+  deprecation.h \
   hash.h \
   httprpc.h \
   httpserver.h \
@@ -196,7 +203,7 @@ obj/build.h: FORCE
 libbitcoin_util_a-clientversion.$(OBJEXT): obj/build.h
 
 # server: zcashd
-libbitcoin_server_a_CPPFLAGS = $(BITCOIN_INCLUDES) $(MINIUPNPC_CPPFLAGS) $(EVENT_CFLAGS) $(EVENT_PTHREADS_CFLAGS)
+libbitcoin_server_a_CPPFLAGS = $(BITCOIN_INCLUDES) $(EVENT_CFLAGS) $(EVENT_PTHREADS_CFLAGS)
 libbitcoin_server_a_SOURCES = \
   sendalert.cpp \
   addrman.cpp \
@@ -207,6 +214,7 @@ libbitcoin_server_a_SOURCES = \
   bloom.cpp \
   chain.cpp \
   checkpoints.cpp \
+  deprecation.cpp \
   httprpc.cpp \
   httpserver.cpp \
   init.cpp \
@@ -245,6 +253,15 @@ libbitcoin_zmq_a_SOURCES = \
   zmq/zmqpublishnotifier.cpp
 endif
 
+if ENABLE_PROTON
+LIBBITCOIN_PROTON=libbitcoin_proton.a
+
+libbitcoin_proton_a_CPPFLAGS = $(BITCOIN_INCLUDES)
+libbitcoin_proton_a_SOURCES = \
+  amqp/amqpabstractnotifier.cpp \
+  amqp/amqpnotificationinterface.cpp \
+  amqp/amqppublishnotifier.cpp
+endif
 
 # wallet: zcashd, but only linked when wallet enabled
 libbitcoin_wallet_a_CPPFLAGS = $(BITCOIN_INCLUDES)
@@ -307,8 +324,6 @@ libbitcoin_common_a_SOURCES = \
   compressor.cpp \
   core_read.cpp \
   core_write.cpp \
-  eccryptoverify.cpp \
-  ecwrapper.cpp \
   hash.cpp \
   key.cpp \
   keystore.cpp \
@@ -396,12 +411,15 @@ zcashd_LDADD += \
   $(BDB_LIBS) \
   $(SSL_LIBS) \
   $(CRYPTO_LIBS) \
-  $(MINIUPNPC_LIBS) \
   $(EVENT_PTHREADS_LIBS) \
   $(EVENT_LIBS) \
   $(LIBZCASH) \
   $(LIBBITCOIN_CRYPTO) \
   $(LIBZCASH_LIBS)
+
+if ENABLE_PROTON
+zcashd_LDADD += $(LIBBITCOIN_PROTON) $(PROTON_LIBS)
+endif
 
 # bitcoin-cli binary #
 zcash_cli_SOURCES = bitcoin-cli.cpp
@@ -482,8 +500,6 @@ libzcashconsensus_la_SOURCES = \
   crypto/sha1.cpp \
   crypto/sha256.cpp \
   crypto/sha512.cpp \
-  eccryptoverify.cpp \
-  ecwrapper.cpp \
   hash.cpp \
   primitives/transaction.cpp \
   pubkey.cpp \
@@ -498,8 +514,8 @@ if GLIBC_BACK_COMPAT
 endif
 
 libzcashconsensus_la_LDFLAGS = -no-undefined $(RELDFLAGS)
-libzcashconsensus_la_LIBADD = $(CRYPTO_LIBS)
-libzcashconsensus_la_CPPFLAGS = $(CRYPTO_CFLAGS) -I$(builddir)/obj -DBUILD_BITCOIN_INTERNAL
+libzcashconsensus_la_LIBADD = $(LIBSECP256K1)
+libzcashconsensus_la_CPPFLAGS = -I$(builddir)/obj -I$(srcdir)/secp256k1/include -DBUILD_BITCOIN_INTERNAL
 
 endif
 #
