@@ -1,4 +1,4 @@
-Zcash 1.0.11
+Zcash 1.0.12
 =============
 
 What is Zcash?
