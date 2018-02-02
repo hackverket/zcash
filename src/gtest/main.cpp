@@ -1,11 +1,11 @@
-#include "gtest/gtest.h"
+#include "gmock/gmock.h"
 #include "crypto/common.h"
 #include "pubkey.h"
-
-#include "libsnark/common/default_types/r1cs_ppzksnark_pp.hpp"
-#include "libsnark/zk_proof_systems/ppzksnark/r1cs_ppzksnark/r1cs_ppzksnark.hpp"
 #include "zcash/JoinSplit.hpp"
 #include "util.h"
+
+#include <libsnark/common/default_types/r1cs_ppzksnark_pp.hpp>
+#include <libsnark/zk_proof_systems/ppzksnark/r1cs_ppzksnark/r1cs_ppzksnark.hpp>
 
 struct ECCryptoClosure
 {
@@ -25,6 +25,6 @@ int main(int argc, char **argv) {
   boost::filesystem::path vk_path = ZC_GetParamsDir() / "sprout-verifying.key";
   params = ZCJoinSplit::Prepared(vk_path.string(), pk_path.string());
   
-  testing::InitGoogleTest(&argc, argv);
+  testing::InitGoogleMock(&argc, argv);
   return RUN_ALL_TESTS();
 }

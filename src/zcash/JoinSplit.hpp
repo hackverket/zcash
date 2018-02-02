@@ -1,5 +1,5 @@
-#ifndef _ZCJOINSPLIT_H_
-#define _ZCJOINSPLIT_H_
+#ifndef ZC_JOINSPLIT_H_
+#define ZC_JOINSPLIT_H_
 
 #include "Zcash.h"
 #include "Proof.hpp"
@@ -73,7 +73,11 @@ public:
         uint64_t vpub_old,
         uint64_t vpub_new,
         const uint256& rt,
-        bool computeProof = true
+        bool computeProof = true,
+        // For paymentdisclosure, we need to retrieve the esk.
+        // Reference as non-const parameter with default value leads to compile error.
+        // So use pointer for simplicity.
+        uint256 *out_esk = nullptr
     ) = 0;
 
     virtual bool verify(
@@ -98,4 +102,4 @@ protected:
 typedef libzcash::JoinSplit<ZC_NUM_JS_INPUTS,
                             ZC_NUM_JS_OUTPUTS> ZCJoinSplit;
 
-#endif // _ZCJOINSPLIT_H_
+#endif // ZC_JOINSPLIT_H_
