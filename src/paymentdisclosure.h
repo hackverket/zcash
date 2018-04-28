@@ -48,7 +48,7 @@ struct PaymentDisclosureInfo {
     ADD_SERIALIZE_METHODS;
 
     template <typename Stream, typename Operation>
-    inline void SerializationOp(Stream& s, Operation ser_action, int nType, int nVersion) {
+    inline void SerializationOp(Stream& s, Operation ser_action) {
         READWRITE(version);
         READWRITE(esk);
         READWRITE(joinSplitPrivKey);
@@ -73,7 +73,7 @@ struct PaymentDisclosurePayload {
     uint8_t version;        // 0 = experimental, 1 = first production version, etc.
     uint256 esk;            // zcash/NoteEncryption.cpp
     uint256 txid;           // primitives/transaction.h
-    size_t js;              // Index into CTransaction.vjoinsplit
+    uint64_t js;            // Index into CTransaction.vjoinsplit
     uint8_t n;              // Index into JSDescription fields of length ZC_NUM_JS_OUTPUTS
     libzcash::PaymentAddress zaddr; // zcash/Address.hpp
     std::string message;     // parameter to RPC call
@@ -81,7 +81,7 @@ struct PaymentDisclosurePayload {
     ADD_SERIALIZE_METHODS;
 
     template <typename Stream, typename Operation>
-    inline void SerializationOp(Stream& s, Operation ser_action, int nType, int nVersion) {
+    inline void SerializationOp(Stream& s, Operation ser_action) {
         READWRITE(marker);
         READWRITE(version);
         READWRITE(esk);
@@ -123,7 +123,7 @@ struct PaymentDisclosure {
     ADD_SERIALIZE_METHODS;
 
     template <typename Stream, typename Operation>
-    inline void SerializationOp(Stream& s, Operation ser_action, int nType, int nVersion) {
+    inline void SerializationOp(Stream& s, Operation ser_action) {
         READWRITE(payload);
         READWRITE(payloadSig);
     }

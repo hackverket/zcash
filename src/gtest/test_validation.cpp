@@ -1,5 +1,6 @@
 #include <gtest/gtest.h>
 
+#include "consensus/upgrades.h"
 #include "consensus/validation.h"
 #include "main.h"
 #include "utiltest.h"
@@ -24,7 +25,7 @@ public:
         return false;
     }
 
-    bool GetNullifier(const uint256 &nf) const {
+    bool GetNullifier(const uint256 &nf, NullifierType type) const {
         return false;
     }
 
@@ -50,7 +51,8 @@ public:
                     const uint256 &hashBlock,
                     const uint256 &hashAnchor,
                     CAnchorsMap &mapAnchors,
-                    CNullifiersMap &mapNullifiers) {
+                    CNullifiersMap &mapSproutNullifiers,
+                    CNullifiersMap saplingNullifiersMap) {
         return false;
     }
 
@@ -70,8 +72,12 @@ TEST(Validation, ContextualCheckInputsPassesWithCoinbase) {
     FakeCoinsViewDB fakeDB;
     CCoinsViewCache view(&fakeDB);
 
-    CValidationState state;
-    EXPECT_TRUE(ContextualCheckInputs(tx, state, view, false, 0, false, Params(CBaseChainParams::MAIN).GetConsensus()));
+    for (int idx = Consensus::BASE_SPROUT; idx < Consensus::MAX_NETWORK_UPGRADES; idx++) {
+        auto consensusBranchId = NetworkUpgradeInfo[idx].nBranchId;
+        CValidationState state;
+        PrecomputedTransactionData txdata(tx);
+        EXPECT_TRUE(ContextualCheckInputs(tx, state, view, false, 0, false, txdata, Params(CBaseChainParams::MAIN).GetConsensus(), consensusBranchId));
+    }
 }
 
 TEST(Validation, ReceivedBlockTransactions) {

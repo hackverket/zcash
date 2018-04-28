@@ -26,7 +26,7 @@ struct CDiskBlockPos
     ADD_SERIALIZE_METHODS;
 
     template <typename Stream, typename Operation>
-    inline void SerializationOp(Stream& s, Operation ser_action, int nType, int nVersion) {
+    inline void SerializationOp(Stream& s, Operation ser_action) {
         READWRITE(VARINT(nFile));
         READWRITE(VARINT(nPos));
     }
@@ -94,7 +94,13 @@ enum BlockStatus: uint32_t {
     BLOCK_FAILED_VALID       =   32, //! stage after last reached validness failed
     BLOCK_FAILED_CHILD       =   64, //! descends from failed block
     BLOCK_FAILED_MASK        =   BLOCK_FAILED_VALID | BLOCK_FAILED_CHILD,
+
+    BLOCK_ACTIVATES_UPGRADE  =   128, //! block activates a network upgrade
 };
+
+//! Short-hand for the highest consensus validity we implement.
+//! Blocks with this validity are assumed to satisfy all consensus rules.
+static const BlockStatus BLOCK_VALID_CONSENSUS = BLOCK_VALID_SCRIPTS;
 
 /** The block chain is a tree shaped structure starting with the
  * genesis block at the root, with each block potentially having multiple
@@ -140,6 +146,11 @@ public:
     //! Verification status of this block. See enum BlockStatus
     unsigned int nStatus;
 
+    //! Branch ID corresponding to the consensus rules used to validate this block.
+    //! Only cached if block validity is BLOCK_VALID_CONSENSUS.
+    //! Persisted at each activation height, memory-only for intervening blocks.
+    boost::optional<uint32_t> nCachedBranchId;
+
     //! The anchor for the tree state up to the start of this block
     uint256 hashAnchor;
 
@@ -180,6 +191,7 @@ public:
         nTx = 0;
         nChainTx = 0;
         nStatus = 0;
+        nCachedBranchId = boost::none;
         hashAnchor = uint256();
         hashAnchorEnd = uint256();
         nSequenceId = 0;
@@ -328,8 +340,9 @@ public:
     ADD_SERIALIZE_METHODS;
 
     template <typename Stream, typename Operation>
-    inline void SerializationOp(Stream& s, Operation ser_action, int nType, int nVersion) {
-        if (!(nType & SER_GETHASH))
+    inline void SerializationOp(Stream& s, Operation ser_action) {
+        int nVersion = s.GetVersion();
+        if (!(s.GetType() & SER_GETHASH))
             READWRITE(VARINT(nVersion));
 
         READWRITE(VARINT(nHeight));
@@ -341,6 +354,18 @@ public:
             READWRITE(VARINT(nDataPos));
         if (nStatus & BLOCK_HAVE_UNDO)
             READWRITE(VARINT(nUndoPos));
+        if (nStatus & BLOCK_ACTIVATES_UPGRADE) {
+            if (ser_action.ForRead()) {
+                uint32_t branchId;
+                READWRITE(branchId);
+                nCachedBranchId = branchId;
+            } else {
+                // nCachedBranchId must always be set if BLOCK_ACTIVATES_UPGRADE is set.
+                assert(nCachedBranchId);
+                uint32_t branchId = *nCachedBranchId;
+                READWRITE(branchId);
+            }
+        }
         READWRITE(hashAnchor);
 
         // block header
@@ -355,7 +380,7 @@ public:
 
         // Only read/write nSproutValue if the client version used to create
         // this index was storing them.
-        if ((nType & SER_DISK) && (nVersion >= SPROUT_VALUE_VERSION)) {
+        if ((s.GetType() & SER_DISK) && (nVersion >= SPROUT_VALUE_VERSION)) {
             READWRITE(nSproutValue);
         }
     }

@@ -194,7 +194,7 @@ public:
     K GetKey() {
         K ret;
         if (vchData.size() == Size) {
-            //if base58 encouded data not holds a ext key, return a !IsValid() key
+            //if base58 encoded data not holds a ext key, return a !IsValid() key
             ret.Decode(&vchData[0]);
         }
         return ret;
@@ -211,7 +211,7 @@ public:
     CBitcoinExtKeyBase() {}
 };
 
-typedef CBitcoinExtKeyBase<CExtKey, 74, CChainParams::EXT_SECRET_KEY> CBitcoinExtKey;
-typedef CBitcoinExtKeyBase<CExtPubKey, 74, CChainParams::EXT_PUBLIC_KEY> CBitcoinExtPubKey;
+typedef CBitcoinExtKeyBase<CExtKey, BIP32_EXTKEY_SIZE, CChainParams::EXT_SECRET_KEY> CBitcoinExtKey;
+typedef CBitcoinExtKeyBase<CExtPubKey, BIP32_EXTKEY_SIZE, CChainParams::EXT_PUBLIC_KEY> CBitcoinExtPubKey;
 
 #endif // BITCOIN_BASE58_H
