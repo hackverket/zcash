@@ -4,45 +4,23 @@ release-notes at release time)
 Notable changes
 ===============
 
-zcash-cli: arguments privacy
-----------------------------
+`-disabledeprecation` removal
+-----------------------------
 
-The RPC command line client gained a new argument, `-stdin`
-to read extra arguments from standard input, one per line until EOF/Ctrl-D.
-For example:
+In release 1.0.9 we implemented automatic deprecation of `zcashd` software
+versions made by the Zcash Company. The configuration option
+`-disabledeprecation` was added as a way for users to specifically choose to
+stay on a particular software version. However, it incorrectly implied that
+deprecated releases would still be supported.
 
-    $ src/zcash-cli -stdin walletpassphrase
-    mysecretcode
-    120
-    ^D (Ctrl-D)
+This release removes the `-disabledeprecation` option, so that `zcashd` software
+versions made by the Zcash Company will always shut down in accordance with the
+defined deprecation policy (currently 16 weeks after release). Users who wish to
+use a different policy must now specifically choose to either:
 
-It is recommended to use this for sensitive information such as private keys, as
-command-line arguments can usually be read from the process table by any user on
-the system.
+- edit and compile the source code themselves, or
+- obtain a software version from someone else who has done so (and obtain
+  support from them).
 
-Asm representations of scriptSig signatures now contain SIGHASH type decodes
-----------------------------------------------------------------------------
-
-The `asm` property of each scriptSig now contains the decoded signature hash
-type for each signature that provides a valid defined hash type.
-
-The following items contain assembly representations of scriptSig signatures
-and are affected by this change:
-
-- RPC `getrawtransaction`
-- RPC `decoderawtransaction`
-- REST `/rest/tx/` (JSON format)
-- REST `/rest/block/` (JSON format when including extended tx details)
-- `zcash-tx -json`
-
-For example, the `scriptSig.asm` property of a transaction input that
-previously showed an assembly representation of:
-
-    304502207fa7a6d1e0ee81132a269ad84e68d695483745cde8b541e3bf630749894e342a022100c1f7ab20e13e22fb95281a870f3dcf38d782e53023ee313d741ad0cfbc0c509001
-
-now shows as:
-
-    304502207fa7a6d1e0ee81132a269ad84e68d695483745cde8b541e3bf630749894e342a022100c1f7ab20e13e22fb95281a870f3dcf38d782e53023ee313d741ad0cfbc0c5090[ALL]
-
-Note that the output of the RPC `decodescript` did not change because it is
-configured specifically to process scriptPubKey and not scriptSig scripts.
+Either way, it is much clearer that the software they are running is not
+supported by the Zcash Company.

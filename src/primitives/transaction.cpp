@@ -9,26 +9,31 @@
 #include "tinyformat.h"
 #include "utilstrencodings.h"
 
-JSDescription::JSDescription(ZCJoinSplit& params,
-            const uint256& pubKeyHash,
-            const uint256& anchor,
-            const boost::array<libzcash::JSInput, ZC_NUM_JS_INPUTS>& inputs,
-            const boost::array<libzcash::JSOutput, ZC_NUM_JS_OUTPUTS>& outputs,
-            CAmount vpub_old,
-            CAmount vpub_new,
-            bool computeProof,
-            uint256 *esk // payment disclosure
-            ) : vpub_old(vpub_old), vpub_new(vpub_new), anchor(anchor)
+#include "librustzcash.h"
+
+JSDescription::JSDescription(
+    bool makeGrothProof,
+    ZCJoinSplit& params,
+    const uint256& joinSplitPubKey,
+    const uint256& anchor,
+    const std::array<libzcash::JSInput, ZC_NUM_JS_INPUTS>& inputs,
+    const std::array<libzcash::JSOutput, ZC_NUM_JS_OUTPUTS>& outputs,
+    CAmount vpub_old,
+    CAmount vpub_new,
+    bool computeProof,
+    uint256 *esk // payment disclosure
+) : vpub_old(vpub_old), vpub_new(vpub_new), anchor(anchor)
 {
-    boost::array<libzcash::Note, ZC_NUM_JS_OUTPUTS> notes;
+    std::array<libzcash::SproutNote, ZC_NUM_JS_OUTPUTS> notes;
 
     proof = params.prove(
+        makeGrothProof,
         inputs,
         outputs,
         notes,
         ciphertexts,
         ephemeralKey,
-        pubKeyHash,
+        joinSplitPubKey,
         randomSeed,
         macs,
         nullifiers,
@@ -42,19 +47,20 @@ JSDescription::JSDescription(ZCJoinSplit& params,
 }
 
 JSDescription JSDescription::Randomized(
-            ZCJoinSplit& params,
-            const uint256& pubKeyHash,
-            const uint256& anchor,
-            boost::array<libzcash::JSInput, ZC_NUM_JS_INPUTS>& inputs,
-            boost::array<libzcash::JSOutput, ZC_NUM_JS_OUTPUTS>& outputs,
-            boost::array<size_t, ZC_NUM_JS_INPUTS>& inputMap,
-            boost::array<size_t, ZC_NUM_JS_OUTPUTS>& outputMap,
-            CAmount vpub_old,
-            CAmount vpub_new,
-            bool computeProof,
-            uint256 *esk, // payment disclosure
-            std::function<int(int)> gen
-        )
+    bool makeGrothProof,
+    ZCJoinSplit& params,
+    const uint256& joinSplitPubKey,
+    const uint256& anchor,
+    std::array<libzcash::JSInput, ZC_NUM_JS_INPUTS>& inputs,
+    std::array<libzcash::JSOutput, ZC_NUM_JS_OUTPUTS>& outputs,
+    std::array<size_t, ZC_NUM_JS_INPUTS>& inputMap,
+    std::array<size_t, ZC_NUM_JS_OUTPUTS>& outputMap,
+    CAmount vpub_old,
+    CAmount vpub_new,
+    bool computeProof,
+    uint256 *esk, // payment disclosure
+    std::function<int(int)> gen
+)
 {
     // Randomize the order of the inputs and outputs
     inputMap = {0, 1};
@@ -66,7 +72,8 @@ JSDescription JSDescription::Randomized(
     MappedShuffle(outputs.begin(), outputMap.begin(), ZC_NUM_JS_OUTPUTS, gen);
 
     return JSDescription(
-        params, pubKeyHash, anchor, inputs, outputs,
+        makeGrothProof,
+        params, joinSplitPubKey, anchor, inputs, outputs,
         vpub_old, vpub_new, computeProof,
         esk // payment disclosure
     );
@@ -76,23 +83,23 @@ class SproutProofVerifier : public boost::static_visitor<bool>
 {
     ZCJoinSplit& params;
     libzcash::ProofVerifier& verifier;
-    const uint256& pubKeyHash;
+    const uint256& joinSplitPubKey;
     const JSDescription& jsdesc;
 
 public:
     SproutProofVerifier(
         ZCJoinSplit& params,
         libzcash::ProofVerifier& verifier,
-        const uint256& pubKeyHash,
+        const uint256& joinSplitPubKey,
         const JSDescription& jsdesc
-        ) : params(params), jsdesc(jsdesc), verifier(verifier), pubKeyHash(pubKeyHash) {}
+        ) : params(params), jsdesc(jsdesc), verifier(verifier), joinSplitPubKey(joinSplitPubKey) {}
 
-    bool operator()(const libzcash::ZCProof& proof) const
+    bool operator()(const libzcash::PHGRProof& proof) const
     {
         return params.verify(
             proof,
             verifier,
-            pubKeyHash,
+            joinSplitPubKey,
             jsdesc.randomSeed,
             jsdesc.macs,
             jsdesc.nullifiers,
@@ -105,22 +112,36 @@ public:
 
     bool operator()(const libzcash::GrothProof& proof) const
     {
-        return false;
+        uint256 h_sig = params.h_sig(jsdesc.randomSeed, jsdesc.nullifiers, joinSplitPubKey);
+
+        return librustzcash_sprout_verify(
+            proof.begin(),
+            jsdesc.anchor.begin(),
+            h_sig.begin(),
+            jsdesc.macs[0].begin(),
+            jsdesc.macs[1].begin(),
+            jsdesc.nullifiers[0].begin(),
+            jsdesc.nullifiers[1].begin(),
+            jsdesc.commitments[0].begin(),
+            jsdesc.commitments[1].begin(),
+            jsdesc.vpub_old,
+            jsdesc.vpub_new
+        );
     }
 };
 
 bool JSDescription::Verify(
     ZCJoinSplit& params,
     libzcash::ProofVerifier& verifier,
-    const uint256& pubKeyHash
+    const uint256& joinSplitPubKey
 ) const {
-    auto pv = SproutProofVerifier(params, verifier, pubKeyHash, *this);
+    auto pv = SproutProofVerifier(params, verifier, joinSplitPubKey, *this);
     return boost::apply_visitor(pv, proof);
 }
 
-uint256 JSDescription::h_sig(ZCJoinSplit& params, const uint256& pubKeyHash) const
+uint256 JSDescription::h_sig(ZCJoinSplit& params, const uint256& joinSplitPubKey) const
 {
-    return params.h_sig(randomSeed, nullifiers, pubKeyHash);
+    return params.h_sig(randomSeed, nullifiers, joinSplitPubKey);
 }
 
 std::string COutPoint::ToString() const
@@ -256,9 +277,18 @@ CAmount CTransaction::GetValueOut() const
             throw std::runtime_error("CTransaction::GetValueOut(): value out of range");
     }
 
+    if (valueBalance <= 0) {
+        // NB: negative valueBalance "takes" money from the transparent value pool just as outputs do
+        nValueOut += -valueBalance;
+
+        if (!MoneyRange(-valueBalance) || !MoneyRange(nValueOut)) {
+            throw std::runtime_error("CTransaction::GetValueOut(): value out of range");
+        }
+    }
+
     for (std::vector<JSDescription>::const_iterator it(vjoinsplit.begin()); it != vjoinsplit.end(); ++it)
     {
-        // NB: vpub_old "takes" money from the value pool just as outputs do
+        // NB: vpub_old "takes" money from the transparent value pool just as outputs do
         nValueOut += it->vpub_old;
 
         if (!MoneyRange(it->vpub_old) || !MoneyRange(nValueOut))
@@ -267,16 +297,26 @@ CAmount CTransaction::GetValueOut() const
     return nValueOut;
 }
 
-CAmount CTransaction::GetJoinSplitValueIn() const
+CAmount CTransaction::GetShieldedValueIn() const
 {
     CAmount nValue = 0;
+
+    if (valueBalance >= 0) {
+        // NB: positive valueBalance "gives" money to the transparent value pool just as inputs do
+        nValue += valueBalance;
+
+        if (!MoneyRange(valueBalance) || !MoneyRange(nValue)) {
+            throw std::runtime_error("CTransaction::GetShieldedValueIn(): value out of range");
+        }
+    }
+
     for (std::vector<JSDescription>::const_iterator it(vjoinsplit.begin()); it != vjoinsplit.end(); ++it)
     {
-        // NB: vpub_new "gives" money to the value pool just as inputs do
+        // NB: vpub_new "gives" money to the transparent value pool just as inputs do
         nValue += it->vpub_new;
 
         if (!MoneyRange(it->vpub_new) || !MoneyRange(nValue))
-            throw std::runtime_error("CTransaction::GetJoinSplitValueIn(): value out of range");
+            throw std::runtime_error("CTransaction::GetShieldedValueIn(): value out of range");
     }
 
     return nValue;
