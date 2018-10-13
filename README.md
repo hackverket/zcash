@@ -1,4 +1,4 @@
-Zcash 1.1.2-rc1
+Zcash 2.0.0
 =============
 
 What is Zcash?
@@ -49,7 +49,7 @@ Building
 --------
 
 Build Zcash along with most dependencies from source by running
-./zcutil/build.sh. Currently only Linux is officially supported.
+``./zcutil/build.sh -j$(nproc) ``. Currently only Linux is officially supported.
 
 License
 -------
