@@ -742,6 +742,11 @@ bool IsExpiredTx(const CTransaction &tx, int nBlockHeight)
     return static_cast<uint32_t>(nBlockHeight) > tx.nExpiryHeight;
 }
 
+bool IsExpiringSoonTx(const CTransaction &tx, int nNextBlockHeight)
+{
+    return IsExpiredTx(tx, nNextBlockHeight + TX_EXPIRING_SOON_THRESHOLD);
+}
+
 bool CheckFinalTx(const CTransaction &tx, int flags)
 {
     AssertLockHeld(cs_main);
@@ -877,8 +882,14 @@ unsigned int GetP2SHSigOpCount(const CTransaction& tx, const CCoinsViewCache& in
  * 1. AcceptToMemoryPool calls CheckTransaction and this function.
  * 2. ProcessNewBlock calls AcceptBlock, which calls CheckBlock (which calls CheckTransaction)
  *    and ContextualCheckBlock (which calls this function).
+ * 3. The isInitBlockDownload argument is only to assist with testing.
  */
-bool ContextualCheckTransaction(const CTransaction& tx, CValidationState &state, const int nHeight, const int dosLevel)
+bool ContextualCheckTransaction(
+        const CTransaction& tx,
+        CValidationState &state,
+        const int nHeight,
+        const int dosLevel,
+        bool (*isInitBlockDownload)())
 {
     bool overwinterActive = NetworkUpgradeActive(nHeight, Params().GetConsensus(), Consensus::UPGRADE_OVERWINTER);
     bool saplingActive = NetworkUpgradeActive(nHeight, Params().GetConsensus(), Consensus::UPGRADE_SAPLING);
@@ -886,7 +897,7 @@ bool ContextualCheckTransaction(const CTransaction& tx, CValidationState &state,
 
     // If Sprout rules apply, reject transactions which are intended for Overwinter and beyond
     if (isSprout && tx.fOverwintered) {
-        return state.DoS(IsInitialBlockDownload() ? 0 : dosLevel,
+        return state.DoS(isInitBlockDownload() ? 0 : dosLevel,
                          error("ContextualCheckTransaction(): overwinter is not active yet"),
                          REJECT_INVALID, "tx-overwinter-not-active");
     }
@@ -900,7 +911,8 @@ bool ContextualCheckTransaction(const CTransaction& tx, CValidationState &state,
 
         // Reject transactions with non-Sapling version group ID
         if (tx.fOverwintered && tx.nVersionGroupId != SAPLING_VERSION_GROUP_ID) {
-            return state.DoS(dosLevel, error("CheckTransaction(): invalid Sapling tx version"),
+            return state.DoS(isInitBlockDownload() ? 0 : dosLevel,
+                    error("CheckTransaction(): invalid Sapling tx version"),
                     REJECT_INVALID, "bad-sapling-tx-version-group-id");
         }
 
@@ -924,7 +936,8 @@ bool ContextualCheckTransaction(const CTransaction& tx, CValidationState &state,
 
         // Reject transactions with non-Overwinter version group ID
         if (tx.fOverwintered && tx.nVersionGroupId != OVERWINTER_VERSION_GROUP_ID) {
-            return state.DoS(dosLevel, error("CheckTransaction(): invalid Overwinter tx version"),
+            return state.DoS(isInitBlockDownload() ? 0 : dosLevel,
+                    error("CheckTransaction(): invalid Overwinter tx version"),
                     REJECT_INVALID, "bad-overwinter-tx-version-group-id");
         }
 
@@ -987,7 +1000,7 @@ bool ContextualCheckTransaction(const CTransaction& tx, CValidationState &state,
                                         dataToBeSigned.begin(), 32,
                                         tx.joinSplitPubKey.begin()
                                         ) != 0) {
-            return state.DoS(IsInitialBlockDownload() ? 0 : 100,
+            return state.DoS(isInitBlockDownload() ? 0 : 100,
                                 error("CheckTransaction(): invalid joinsplit signature"),
                                 REJECT_INVALID, "bad-txns-invalid-joinsplit-signature");
         }
@@ -1369,6 +1382,13 @@ bool AcceptToMemoryPool(CTxMemPool& pool, CValidationState &state, const CTransa
         return error("AcceptToMemoryPool: ContextualCheckTransaction failed");
     }
 
+    // DoS mitigation: reject transactions expiring soon
+    // Note that if a valid transaction belonging to the wallet is in the mempool and the node is shutdown,
+    // upon restart, CWalletTx::AcceptToMemoryPool() will be invoked which might result in rejection.
+    if (IsExpiringSoonTx(tx, nextBlockHeight)) {
+        return state.DoS(0, error("AcceptToMemoryPool(): transaction is expiring soon"), REJECT_INVALID, "tx-expiring-soon");
+    }
+
     // Coinbase is only valid in a block, not as a loose transaction
     if (tx.IsCoinBase())
         return state.DoS(100, error("AcceptToMemoryPool: coinbase as individual tx"),
@@ -1448,8 +1468,8 @@ bool AcceptToMemoryPool(CTxMemPool& pool, CValidationState &state, const CTransa
             return state.Invalid(error("AcceptToMemoryPool: inputs already spent"),
                                  REJECT_DUPLICATE, "bad-txns-inputs-spent");
 
-        // are the joinsplit's requirements met?
-        if (!view.HaveJoinSplitRequirements(tx))
+        // are the joinsplits' and sapling spends' requirements met in tx(valid anchors/nullifiers)?
+        if (!view.HaveShieldedRequirements(tx))
             return state.Invalid(error("AcceptToMemoryPool: joinsplit requirements not met"),
                                  REJECT_DUPLICATE, "bad-txns-joinsplit-requirements-not-met");
 
@@ -1960,7 +1980,7 @@ bool CheckTxInputs(const CTransaction& tx, CValidationState& state, const CCoins
             return state.Invalid(error("CheckInputs(): %s inputs unavailable", tx.GetHash().ToString()));
 
         // are the JoinSplit's requirements met?
-        if (!inputs.HaveJoinSplitRequirements(tx))
+        if (!inputs.HaveShieldedRequirements(tx))
             return state.Invalid(error("CheckInputs(): %s JoinSplit requirements not met", tx.GetHash().ToString()));
 
         CAmount nValueIn = 0;
@@ -2491,7 +2511,7 @@ bool ConnectBlock(const CBlock& block, CValidationState& state, CBlockIndex* pin
                                  REJECT_INVALID, "bad-txns-inputs-missingorspent");
 
             // are the JoinSplit's requirements met?
-            if (!view.HaveJoinSplitRequirements(tx))
+            if (!view.HaveShieldedRequirements(tx))
                 return state.DoS(100, error("ConnectBlock(): JoinSplit requirements not met"),
                                  REJECT_INVALID, "bad-txns-joinsplit-requirements-not-met");
 
@@ -3138,9 +3158,7 @@ bool ActivateBestChain(CValidationState &state, CBlock *pblock) {
             int nBlockEstimate = 0;
             if (fCheckpointsEnabled)
                 nBlockEstimate = Checkpoints::GetTotalBlocksEstimate(chainParams.Checkpoints());
-            // Don't relay blocks if pruning -- could cause a peer to try to download, resulting
-            // in a stalled download if the block file is pruned before the request.
-            if (nLocalServices & NODE_NETWORK) {
+            {
                 LOCK(cs_vNodes);
                 BOOST_FOREACH(CNode* pnode, vNodes)
                     if (chainActive.Height() > (pnode->nStartingHeight != -1 ? pnode->nStartingHeight - 2000 : nBlockEstimate))
@@ -4849,6 +4867,8 @@ bool static AlreadyHave(const CInv& inv) EXCLUSIVE_LOCKS_REQUIRED(cs_main)
 
 void static ProcessGetData(CNode* pfrom)
 {
+    int currentHeight = GetHeight();
+
     std::deque<CInv>::iterator it = pfrom->vRecvGetData.begin();
 
     vector<CInv> vNotFound;
@@ -4933,26 +4953,38 @@ void static ProcessGetData(CNode* pfrom)
             }
             else if (inv.IsKnownType())
             {
-                // Send stream from relay memory
+                // Check the mempool to see if a transaction is expiring soon.  If so, do not send to peer.
+                // Note that a transaction enters the mempool first, before the serialized form is cached
+                // in mapRelay after a successful relay.
+                bool isExpiringSoon = false;
                 bool pushed = false;
-                {
-                    LOCK(cs_mapRelay);
-                    map<CInv, CDataStream>::iterator mi = mapRelay.find(inv);
-                    if (mi != mapRelay.end()) {
-                        pfrom->PushMessage(inv.GetCommand(), (*mi).second);
-                        pushed = true;
+                CTransaction tx;
+                bool isInMempool = mempool.lookup(inv.hash, tx);
+                if (isInMempool) {
+                    isExpiringSoon = IsExpiringSoonTx(tx, currentHeight + 1);
+                }
+
+                if (!isExpiringSoon) {
+                    // Send stream from relay memory
+                    {
+                        LOCK(cs_mapRelay);
+                        map<CInv, CDataStream>::iterator mi = mapRelay.find(inv);
+                        if (mi != mapRelay.end()) {
+                            pfrom->PushMessage(inv.GetCommand(), (*mi).second);
+                            pushed = true;
+                        }
+                    }
+                    if (!pushed && inv.type == MSG_TX) {
+                        if (isInMempool) {
+                            CDataStream ss(SER_NETWORK, PROTOCOL_VERSION);
+                            ss.reserve(1000);
+                            ss << tx;
+                            pfrom->PushMessage("tx", ss);
+                            pushed = true;
+                        }
                     }
                 }
-                if (!pushed && inv.type == MSG_TX) {
-                    CTransaction tx;
-                    if (mempool.lookup(inv.hash, tx)) {
-                        CDataStream ss(SER_NETWORK, PROTOCOL_VERSION);
-                        ss.reserve(1000);
-                        ss << tx;
-                        pfrom->PushMessage("tx", ss);
-                        pushed = true;
-                    }
-                }
+
                 if (!pushed) {
                     vNotFound.push_back(inv);
                 }
@@ -5016,15 +5048,15 @@ bool static ProcessMessage(CNode* pfrom, string strCommand, CDataStream& vRecv, 
             return false;
         }
 
-        // When Overwinter is active, reject incoming connections from non-Overwinter nodes
+        // Reject incoming connections from nodes that don't know about the current epoch
         const Consensus::Params& params = Params().GetConsensus();
-        if (NetworkUpgradeActive(GetHeight(), params, Consensus::UPGRADE_OVERWINTER)
-            && pfrom->nVersion < params.vUpgrades[Consensus::UPGRADE_OVERWINTER].nProtocolVersion)
+        auto currentEpoch = CurrentEpoch(GetHeight(), params);
+        if (pfrom->nVersion < params.vUpgrades[currentEpoch].nProtocolVersion)
         {
             LogPrintf("peer=%d using obsolete version %i; disconnecting\n", pfrom->id, pfrom->nVersion);
             pfrom->PushMessage("reject", strCommand, REJECT_OBSOLETE,
                             strprintf("Version must be %d or greater",
-                            params.vUpgrades[Consensus::UPGRADE_OVERWINTER].nProtocolVersion));
+                            params.vUpgrades[currentEpoch].nProtocolVersion));
             pfrom->fDisconnect = true;
             return false;
         }
@@ -5149,15 +5181,15 @@ bool static ProcessMessage(CNode* pfrom, string strCommand, CDataStream& vRecv, 
 
     // Disconnect existing peer connection when:
     // 1. The version message has been received
-    // 2. Overwinter is active
-    // 3. Peer version is pre-Overwinter
-    else if (NetworkUpgradeActive(GetHeight(), chainparams.GetConsensus(), Consensus::UPGRADE_OVERWINTER)
-            && (pfrom->nVersion < chainparams.GetConsensus().vUpgrades[Consensus::UPGRADE_OVERWINTER].nProtocolVersion))
+    // 2. Peer version is below the minimum version for the current epoch
+    else if (pfrom->nVersion < chainparams.GetConsensus().vUpgrades[
+        CurrentEpoch(GetHeight(), chainparams.GetConsensus())].nProtocolVersion)
     {
         LogPrintf("peer=%d using obsolete version %i; disconnecting\n", pfrom->id, pfrom->nVersion);
         pfrom->PushMessage("reject", strCommand, REJECT_OBSOLETE,
                             strprintf("Version must be %d or greater",
-                            chainparams.GetConsensus().vUpgrades[Consensus::UPGRADE_OVERWINTER].nProtocolVersion));
+                            chainparams.GetConsensus().vUpgrades[
+                                CurrentEpoch(GetHeight(), chainparams.GetConsensus())].nProtocolVersion));
         pfrom->fDisconnect = true;
         return false;
     }
@@ -5339,6 +5371,14 @@ bool static ProcessMessage(CNode* pfrom, string strCommand, CDataStream& vRecv, 
                 LogPrint("net", "  getblocks stopping at %d %s\n", pindex->nHeight, pindex->GetBlockHash().ToString());
                 break;
             }
+            // If pruning, don't inv blocks unless we have on disk and are likely to still have
+            // for some reasonable time window (1 hour) that block relay might require.
+            const int nPrunedBlocksLikelyToHave = MIN_BLOCKS_TO_KEEP - 3600 / chainparams.GetConsensus().nPowTargetSpacing;
+            if (fPruneMode && (!(pindex->nStatus & BLOCK_HAVE_DATA) || pindex->nHeight <= chainActive.Tip()->nHeight - nPrunedBlocksLikelyToHave))
+            {
+                LogPrint("net", " getblocks stopping, pruned or too old block at %d %s\n", pindex->nHeight, pindex->GetBlockHash().ToString());
+                break;
+            }
             pfrom->PushInventory(CInv(MSG_BLOCK, pindex->GetBlockHash()));
             if (--nLimit <= 0)
             {
@@ -5477,8 +5517,11 @@ bool static ProcessMessage(CNode* pfrom, string strCommand, CDataStream& vRecv, 
             BOOST_FOREACH(uint256 hash, vEraseQueue)
                 EraseOrphanTx(hash);
         }
-        // TODO: currently, prohibit joinsplits from entering mapOrphans
-        else if (fMissingInputs && tx.vjoinsplit.size() == 0)
+        // TODO: currently, prohibit joinsplits and shielded spends/outputs from entering mapOrphans
+        else if (fMissingInputs &&
+                 tx.vjoinsplit.empty() &&
+                 tx.vShieldedSpend.empty() &&
+                 tx.vShieldedOutput.empty())
         {
             AddOrphanTx(tx, pfrom->GetId());
 
@@ -5632,16 +5675,22 @@ bool static ProcessMessage(CNode* pfrom, string strCommand, CDataStream& vRecv, 
 
     else if (strCommand == "mempool")
     {
+        int currentHeight = GetHeight();
+
         LOCK2(cs_main, pfrom->cs_filter);
 
         std::vector<uint256> vtxid;
         mempool.queryHashes(vtxid);
         vector<CInv> vInv;
         BOOST_FOREACH(uint256& hash, vtxid) {
+            CTransaction tx;
+            bool fInMemPool = mempool.lookup(hash, tx);
+            if (fInMemPool && IsExpiringSoonTx(tx, currentHeight + 1)) {
+                continue;
+            }
+
             CInv inv(MSG_TX, hash);
             if (pfrom->pfilter) {
-                CTransaction tx;
-                bool fInMemPool = mempool.lookup(hash, tx);
                 if (!fInMemPool) continue; // another thread removed since queryHashes, maybe...
                 if (!pfrom->pfilter->IsRelevantAndUpdate(tx)) continue;
             }
@@ -6284,6 +6333,10 @@ CMutableTransaction CreateNewContextualCMutableTransaction(const Consensus::Para
         mtx.fOverwintered = true;
         mtx.nExpiryHeight = nHeight + expiryDelta;
 
+        // NOTE: If the expiry height crosses into an incompatible consensus epoch, and it is changed to the last block
+        // of the current epoch (see below: Overwinter->Sapling), the transaction will be rejected if it falls within
+        // the expiring soon threshold of 3 blocks (for DoS mitigation) based on the current height.
+        // TODO: Generalise this code so behaviour applies to all post-Overwinter epochs
         if (NetworkUpgradeActive(nHeight, consensusParams, Consensus::UPGRADE_SAPLING)) {
             mtx.nVersionGroupId = SAPLING_VERSION_GROUP_ID;
             mtx.nVersion = SAPLING_TX_VERSION;

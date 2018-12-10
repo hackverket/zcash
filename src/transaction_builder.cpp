@@ -34,6 +34,11 @@ bool TransactionBuilder::AddSaplingSpend(
     uint256 anchor,
     SaplingWitness witness)
 {
+    // Sanity check: cannot add Sapling spend to pre-Sapling transaction
+    if (mtx.nVersion < SAPLING_TX_VERSION) {
+        throw std::runtime_error("TransactionBuilder cannot add Sapling spend to pre-Sapling transaction");
+    }
+
     // Consistency check: all anchors must equal the first one
     if (!spends.empty()) {
         if (spends[0].anchor != anchor) {
@@ -47,13 +52,18 @@ bool TransactionBuilder::AddSaplingSpend(
 }
 
 void TransactionBuilder::AddSaplingOutput(
-    libzcash::SaplingFullViewingKey from,
+    uint256 ovk,
     libzcash::SaplingPaymentAddress to,
     CAmount value,
     std::array<unsigned char, ZC_MEMO_SIZE> memo)
 {
+    // Sanity check: cannot add Sapling output to pre-Sapling transaction
+    if (mtx.nVersion < SAPLING_TX_VERSION) {
+        throw std::runtime_error("TransactionBuilder cannot add Sapling output to pre-Sapling transaction");
+    }
+
     auto note = libzcash::SaplingNote(to, value);
-    outputs.emplace_back(from.ovk, note, memo);
+    outputs.emplace_back(ovk, note, memo);
     mtx.valueBalance -= value;
 }
 
@@ -84,9 +94,9 @@ void TransactionBuilder::SetFee(CAmount fee)
     this->fee = fee;
 }
 
-void TransactionBuilder::SendChangeTo(libzcash::SaplingPaymentAddress changeAddr, libzcash::SaplingFullViewingKey fvkOut)
+void TransactionBuilder::SendChangeTo(libzcash::SaplingPaymentAddress changeAddr, uint256 ovk)
 {
-    zChangeAddr = std::make_pair(fvkOut, changeAddr);
+    zChangeAddr = std::make_pair(ovk, changeAddr);
     tChangeAddr = boost::none;
 }
 
@@ -128,7 +138,7 @@ boost::optional<CTransaction> TransactionBuilder::Build()
         // Send change to the specified change address. If no change address
         // was set, send change to the first Sapling address given as input.
         if (zChangeAddr) {
-            AddSaplingOutput(zChangeAddr->first, zChangeAddr->second, change, {});
+            AddSaplingOutput(zChangeAddr->first, zChangeAddr->second, change);
         } else if (tChangeAddr) {
             // tChangeAddr has already been validated.
             assert(AddTransparentOutput(tChangeAddr.value(), change));
@@ -136,7 +146,7 @@ boost::optional<CTransaction> TransactionBuilder::Build()
             auto fvk = spends[0].expsk.full_viewing_key();
             auto note = spends[0].note;
             libzcash::SaplingPaymentAddress changeAddr(note.d, note.pk_d);
-            AddSaplingOutput(fvk, changeAddr, change, {});
+            AddSaplingOutput(fvk.ovk, changeAddr, change);
         } else {
             return boost::none;
         }

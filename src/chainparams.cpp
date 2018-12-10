@@ -95,6 +95,7 @@ public:
         consensus.nPowMaxAdjustDown = 32; // 32% adjustment down
         consensus.nPowMaxAdjustUp = 16; // 16% adjustment up
         consensus.nPowTargetSpacing = 2.5 * 60;
+        consensus.nPowAllowMinDifficultyBlocksAfterHeight = boost::none;
         consensus.vUpgrades[Consensus::BASE_SPROUT].nProtocolVersion = 170002;
         consensus.vUpgrades[Consensus::BASE_SPROUT].nActivationHeight =
             Consensus::NetworkUpgrade::ALWAYS_ACTIVE;
@@ -107,7 +108,7 @@ public:
         consensus.vUpgrades[Consensus::UPGRADE_SAPLING].nActivationHeight = 419200;
 
         // The best chain should have at least this much work.
-        consensus.nMinimumChainWork = uint256S("0x00000000000000000000000000000000000000000000000000281b32ff3198a1");
+        consensus.nMinimumChainWork = uint256S("0x000000000000000000000000000000000000000000000000006f31c0e1f30221");
 
         /**
          * The message start string should be awesome! ⓩ❤
@@ -158,7 +159,7 @@ public:
         bech32HRPs[SAPLING_PAYMENT_ADDRESS]      = "zs";
         bech32HRPs[SAPLING_FULL_VIEWING_KEY]     = "zviews";
         bech32HRPs[SAPLING_INCOMING_VIEWING_KEY] = "zivks";
-        bech32HRPs[SAPLING_SPENDING_KEY]         = "secret-spending-key-main";
+        bech32HRPs[SAPLING_EXTENDED_SPEND_KEY]   = "secret-extended-key-main";
 
         vFixedSeeds = std::vector<SeedSpec6>(pnSeed6_main, pnSeed6_main + ARRAYLEN(pnSeed6_main));
 
@@ -179,11 +180,12 @@ public:
             (180000, uint256S("0x000000001205b742eac4a1b3959635bdf8aeada078d6a996df89740f7b54351d"))
             (222222, uint256S("0x000000000cafb9e56445a6cabc8057b57ee6fcc709e7adbfa195e5c7fac61343"))
             (270000, uint256S("0x00000000025c1cfa0258e33ab050aaa9338a3d4aaa3eb41defefc887779a9729"))
-            (304600, uint256S("0x00000000028324e022a45014c4a4dc51e95d41e6bceb6ad554c5b65d5cea3ea5")),
-            1523506583,     // * UNIX timestamp of last checkpoint block
-            2824682,        // * total number of transactions between genesis and last checkpoint
+            (304600, uint256S("0x00000000028324e022a45014c4a4dc51e95d41e6bceb6ad554c5b65d5cea3ea5"))
+            (410100, uint256S("0x0000000002c565958f783a24a4ac17cde898ff525e75ed9baf66861b0b9fcada")),
+            1539405939,     // * UNIX timestamp of last checkpoint block
+            3954156,        // * total number of transactions between genesis and last checkpoint
                             //   (the tx=... number in the SetBestChain debug.log lines)
-            5341            // * estimated number of transactions per day after checkpoint
+            5553            // * estimated number of transactions per day after checkpoint
                             //   total number of tx / (checkpoint block height / (24 * 24))
         };
 
@@ -271,6 +273,7 @@ public:
         consensus.nPowMaxAdjustDown = 32; // 32% adjustment down
         consensus.nPowMaxAdjustUp = 16; // 16% adjustment up
         consensus.nPowTargetSpacing = 2.5 * 60;
+        consensus.nPowAllowMinDifficultyBlocksAfterHeight = 299187;
         consensus.vUpgrades[Consensus::BASE_SPROUT].nProtocolVersion = 170002;
         consensus.vUpgrades[Consensus::BASE_SPROUT].nActivationHeight =
             Consensus::NetworkUpgrade::ALWAYS_ACTIVE;
@@ -329,7 +332,7 @@ public:
         bech32HRPs[SAPLING_PAYMENT_ADDRESS]      = "ztestsapling";
         bech32HRPs[SAPLING_FULL_VIEWING_KEY]     = "zviewtestsapling";
         bech32HRPs[SAPLING_INCOMING_VIEWING_KEY] = "zivktestsapling";
-        bech32HRPs[SAPLING_SPENDING_KEY]         = "secret-spending-key-test";
+        bech32HRPs[SAPLING_EXTENDED_SPEND_KEY]   = "secret-extended-key-test";
 
         vFixedSeeds = std::vector<SeedSpec6>(pnSeed6_test, pnSeed6_test + ARRAYLEN(pnSeed6_test));
 
@@ -391,6 +394,7 @@ public:
         consensus.nPowMaxAdjustDown = 0; // Turn off adjustment down
         consensus.nPowMaxAdjustUp = 0; // Turn off adjustment up
         consensus.nPowTargetSpacing = 2.5 * 60;
+        consensus.nPowAllowMinDifficultyBlocksAfterHeight = 0;
         consensus.vUpgrades[Consensus::BASE_SPROUT].nProtocolVersion = 170002;
         consensus.vUpgrades[Consensus::BASE_SPROUT].nActivationHeight =
             Consensus::NetworkUpgrade::ALWAYS_ACTIVE;
@@ -457,7 +461,7 @@ public:
         bech32HRPs[SAPLING_PAYMENT_ADDRESS]      = "zregtestsapling";
         bech32HRPs[SAPLING_FULL_VIEWING_KEY]     = "zviewregtestsapling";
         bech32HRPs[SAPLING_INCOMING_VIEWING_KEY] = "zivkregtestsapling";
-        bech32HRPs[SAPLING_SPENDING_KEY]         = "secret-spending-key-regtest";
+        bech32HRPs[SAPLING_EXTENDED_SPEND_KEY]   = "secret-extended-key-regtest";
 
         // Founders reward script expects a vector of 2-of-3 multisig addresses
         vFoundersRewardAddress = { "t2FwcEhFdNXuFMv1tcYwaBJtYVtMj8b1uTg" };

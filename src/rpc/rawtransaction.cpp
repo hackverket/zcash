@@ -7,6 +7,7 @@
 #include "consensus/validation.h"
 #include "core_io.h"
 #include "init.h"
+#include "deprecation.h"
 #include "key_io.h"
 #include "keystore.h"
 #include "main.h"
@@ -114,6 +115,36 @@ UniValue TxJoinSplitToJSON(const CTransaction& tx) {
     return vjoinsplit;
 }
 
+UniValue TxShieldedSpendsToJSON(const CTransaction& tx) {
+    UniValue vdesc(UniValue::VARR);
+    for (const SpendDescription& spendDesc : tx.vShieldedSpend) {
+        UniValue obj(UniValue::VOBJ);
+        obj.push_back(Pair("cv", spendDesc.cv.GetHex()));
+        obj.push_back(Pair("anchor", spendDesc.anchor.GetHex()));
+        obj.push_back(Pair("nullifier", spendDesc.nullifier.GetHex()));
+        obj.push_back(Pair("rk", spendDesc.rk.GetHex()));
+        obj.push_back(Pair("proof", HexStr(spendDesc.zkproof.begin(), spendDesc.zkproof.end())));
+        obj.push_back(Pair("spendAuthSig", HexStr(spendDesc.spendAuthSig.begin(), spendDesc.spendAuthSig.end())));
+        vdesc.push_back(obj);
+    }
+    return vdesc;
+}
+
+UniValue TxShieldedOutputsToJSON(const CTransaction& tx) {
+    UniValue vdesc(UniValue::VARR);
+    for (const OutputDescription& outputDesc : tx.vShieldedOutput) {
+        UniValue obj(UniValue::VOBJ);
+        obj.push_back(Pair("cv", outputDesc.cv.GetHex()));
+        obj.push_back(Pair("cmu", outputDesc.cm.GetHex()));
+        obj.push_back(Pair("ephemeralKey", outputDesc.ephemeralKey.GetHex()));
+        obj.push_back(Pair("encCiphertext", HexStr(outputDesc.encCiphertext.begin(), outputDesc.encCiphertext.end())));
+        obj.push_back(Pair("outCiphertext", HexStr(outputDesc.outCiphertext.begin(), outputDesc.outCiphertext.end())));
+        obj.push_back(Pair("proof", HexStr(outputDesc.zkproof.begin(), outputDesc.zkproof.end())));
+        vdesc.push_back(obj);
+    }
+    return vdesc;
+}
+
 void TxToJSON(const CTransaction& tx, const uint256 hashBlock, UniValue& entry)
 {
     entry.push_back(Pair("txid", tx.GetHash().GetHex()));
@@ -159,6 +190,17 @@ void TxToJSON(const CTransaction& tx, const uint256 hashBlock, UniValue& entry)
 
     UniValue vjoinsplit = TxJoinSplitToJSON(tx);
     entry.push_back(Pair("vjoinsplit", vjoinsplit));
+
+    if (tx.fOverwintered && tx.nVersion >= SAPLING_TX_VERSION) {
+        entry.push_back(Pair("valueBalance", ValueFromAmount(tx.valueBalance)));
+        UniValue vspenddesc = TxShieldedSpendsToJSON(tx);
+        entry.push_back(Pair("vShieldedSpend", vspenddesc));
+        UniValue voutputdesc = TxShieldedOutputsToJSON(tx);
+        entry.push_back(Pair("vShieldedOutput", voutputdesc));
+        if (!(vspenddesc.empty() && voutputdesc.empty())) {
+            entry.push_back(Pair("bindingSig", HexStr(tx.bindingSig.begin(), tx.bindingSig.end())));
+        }
+    }
 
     if (!hashBlock.IsNull()) {
         entry.push_back(Pair("blockhash", hashBlock.GetHex()));
@@ -455,7 +497,7 @@ UniValue createrawtransaction(const UniValue& params, bool fHelp)
             "      ,...\n"
             "    }\n"
             "3. locktime              (numeric, optional, default=0) Raw locktime. Non-0 value also locktime-activates inputs\n"
-            "4. expiryheight          (numeric, optional, default=" + strprintf("%d", DEFAULT_TX_EXPIRY_DELTA) + ") Expiry height of transaction (if Overwinter is active)\n"
+            "4. expiryheight          (numeric, optional, default=nextblockheight+" + strprintf("%d", DEFAULT_TX_EXPIRY_DELTA) + ") Expiry height of transaction (if Overwinter is active)\n"
             "\nResult:\n"
             "\"transaction\"            (string) hex string of the transaction\n"
 
@@ -488,6 +530,12 @@ UniValue createrawtransaction(const UniValue& params, bool fHelp)
             int64_t nExpiryHeight = params[3].get_int64();
             if (nExpiryHeight < 0 || nExpiryHeight >= TX_EXPIRY_HEIGHT_THRESHOLD) {
                 throw JSONRPCError(RPC_INVALID_PARAMETER, strprintf("Invalid parameter, expiryheight must be nonnegative and less than %d.", TX_EXPIRY_HEIGHT_THRESHOLD));
+            }
+            // DoS mitigation: reject transactions expiring soon
+            if (nextBlockHeight + TX_EXPIRING_SOON_THRESHOLD > nExpiryHeight) {
+                throw JSONRPCError(RPC_INVALID_PARAMETER,
+                    strprintf("Invalid parameter, expiryheight should be at least %d to avoid transaction expiring soon",
+                    nextBlockHeight + TX_EXPIRING_SOON_THRESHOLD));
             }
             rawTx.nExpiryHeight = nExpiryHeight;
         } else {
@@ -693,7 +741,7 @@ static void TxInErrorToJSON(const CTxIn& txin, UniValue& vErrorsRet, const std::
 
 UniValue signrawtransaction(const UniValue& params, bool fHelp)
 {
-    if (fHelp || params.size() < 1 || params.size() > 4)
+    if (fHelp || params.size() < 1 || params.size() > 5)
         throw runtime_error(
             "signrawtransaction \"hexstring\" ( [{\"txid\":\"id\",\"vout\":n,\"scriptPubKey\":\"hex\",\"redeemScript\":\"hex\"},...] [\"privatekey1\",...] sighashtype )\n"
             "\nSign inputs for raw transaction (serialized, hex-encoded).\n"
@@ -730,6 +778,8 @@ UniValue signrawtransaction(const UniValue& params, bool fHelp)
             "       \"ALL|ANYONECANPAY\"\n"
             "       \"NONE|ANYONECANPAY\"\n"
             "       \"SINGLE|ANYONECANPAY\"\n"
+            "5.  \"branchid\"       (string, optional) The hex representation of the consensus branch id to sign with."
+            " This can be used to force signing with consensus rules that are ahead of the node's current height.\n"
 
             "\nResult:\n"
             "{\n"
@@ -757,7 +807,7 @@ UniValue signrawtransaction(const UniValue& params, bool fHelp)
 #else
     LOCK(cs_main);
 #endif
-    RPCTypeCheck(params, boost::assign::list_of(UniValue::VSTR)(UniValue::VARR)(UniValue::VARR)(UniValue::VSTR), true);
+    RPCTypeCheck(params, boost::assign::list_of(UniValue::VSTR)(UniValue::VARR)(UniValue::VARR)(UniValue::VSTR)(UniValue::VSTR), true);
 
     vector<unsigned char> txData(ParseHexV(params[0], "argument 1"));
     CDataStream ssData(txData, SER_NETWORK, PROTOCOL_VERSION);
@@ -893,10 +943,23 @@ UniValue signrawtransaction(const UniValue& params, bool fHelp)
     }
 
     bool fHashSingle = ((nHashType & ~SIGHASH_ANYONECANPAY) == SIGHASH_SINGLE);
-
+    // Use the approximate release height if it is greater so offline nodes 
+    // have a better estimation of the current height and will be more likely to
+    // determine the correct consensus branch ID.  Regtest mode ignores release height.
+    int chainHeight = chainActive.Height() + 1;
+    if (Params().NetworkIDString() != "regtest") {
+        chainHeight = std::max(chainHeight, APPROX_RELEASE_HEIGHT);
+    }
     // Grab the current consensus branch ID
-    auto consensusBranchId = CurrentEpochBranchId(chainActive.Height() + 1, Params().GetConsensus());
+    auto consensusBranchId = CurrentEpochBranchId(chainHeight, Params().GetConsensus());
 
+    if (params.size() > 4 && !params[4].isNull()) {
+        consensusBranchId = ParseHexToUInt32(params[4].get_str());
+        if (!IsConsensusBranchId(consensusBranchId)) {
+            throw runtime_error(params[4].get_str() + " is not a valid consensus branch id");
+        }
+    } 
+    
     // Script verification errors
     UniValue vErrors(UniValue::VARR);
 
@@ -974,6 +1037,19 @@ UniValue sendrawtransaction(const UniValue& params, bool fHelp)
     if (!DecodeHexTx(tx, params[0].get_str()))
         throw JSONRPCError(RPC_DESERIALIZATION_ERROR, "TX decode failed");
     uint256 hashTx = tx.GetHash();
+
+    // DoS mitigation: reject transactions expiring soon
+    if (tx.nExpiryHeight > 0) {
+        int nextBlockHeight = chainActive.Height() + 1;
+        if (NetworkUpgradeActive(nextBlockHeight, Params().GetConsensus(), Consensus::UPGRADE_OVERWINTER)) {
+            if (nextBlockHeight + TX_EXPIRING_SOON_THRESHOLD > tx.nExpiryHeight) {
+                throw JSONRPCError(RPC_TRANSACTION_REJECTED,
+                    strprintf("tx-expiring-soon: expiryheight is %d but should be at least %d to avoid transaction expiring soon",
+                    tx.nExpiryHeight,
+                    nextBlockHeight + TX_EXPIRING_SOON_THRESHOLD));
+            }
+        }
+    }
 
     bool fOverrideFees = false;
     if (params.size() > 1)

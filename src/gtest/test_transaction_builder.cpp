@@ -38,7 +38,7 @@ TEST(TransactionBuilder, Invoke)
     // 0.0005 t-ZEC in, 0.0004 z-ZEC out, 0.0001 t-ZEC fee
     auto builder1 = TransactionBuilder(consensusParams, 1, &keystore);
     builder1.AddTransparentInput(COutPoint(), scriptPubKey, 50000);
-    builder1.AddSaplingOutput(fvk_from, pk, 40000, {});
+    builder1.AddSaplingOutput(fvk_from.ovk, pk, 40000, {});
     auto maybe_tx1 = builder1.Build();
     ASSERT_EQ(static_cast<bool>(maybe_tx1), true);
     auto tx1 = maybe_tx1.get();
@@ -56,7 +56,7 @@ TEST(TransactionBuilder, Invoke)
 
     // Prepare to spend the note that was just created
     auto maybe_pt = libzcash::SaplingNotePlaintext::decrypt(
-        tx1.vShieldedOutput[0].encCiphertext, ivk, tx1.vShieldedOutput[0].ephemeralKey);
+        tx1.vShieldedOutput[0].encCiphertext, ivk, tx1.vShieldedOutput[0].ephemeralKey, tx1.vShieldedOutput[0].cm);
     ASSERT_EQ(static_cast<bool>(maybe_pt), true);
     auto maybe_note = maybe_pt.get().note(ivk);
     ASSERT_EQ(static_cast<bool>(maybe_note), true);
@@ -73,7 +73,7 @@ TEST(TransactionBuilder, Invoke)
     // Check that trying to add a different anchor fails
     ASSERT_FALSE(builder2.AddSaplingSpend(expsk, note, uint256(), witness));
 
-    builder2.AddSaplingOutput(fvk, pk, 25000, {});
+    builder2.AddSaplingOutput(fvk.ovk, pk, 25000, {});
     auto maybe_tx2 = builder2.Build();
     ASSERT_EQ(static_cast<bool>(maybe_tx2), true);
     auto tx2 = maybe_tx2.get();
@@ -153,7 +153,7 @@ TEST(TransactionBuilder, FailsWithNegativeChange)
     // Fail if there is only a Sapling output
     // 0.0005 z-ZEC out, 0.0001 t-ZEC fee
     auto builder = TransactionBuilder(consensusParams, 1);
-    builder.AddSaplingOutput(fvk, pk, 50000, {});
+    builder.AddSaplingOutput(fvk.ovk, pk, 50000, {});
     EXPECT_FALSE(static_cast<bool>(builder.Build()));
 
     // Fail if there is only a transparent output
@@ -237,7 +237,7 @@ TEST(TransactionBuilder, ChangeOutput)
     {
         auto builder = TransactionBuilder(consensusParams, 1, &keystore);
         builder.AddTransparentInput(COutPoint(), scriptPubKey, 25000);
-        builder.SendChangeTo(zChangeAddr, fvkOut);
+        builder.SendChangeTo(zChangeAddr, fvkOut.ovk);
         auto maybe_tx = builder.Build();
         ASSERT_EQ(static_cast<bool>(maybe_tx), true);
         auto tx = maybe_tx.get();
@@ -298,7 +298,7 @@ TEST(TransactionBuilder, SetFee)
     {
         auto builder = TransactionBuilder(consensusParams, 1);
         ASSERT_TRUE(builder.AddSaplingSpend(expsk, note, anchor, witness));
-        builder.AddSaplingOutput(fvk, pk, 25000, {});
+        builder.AddSaplingOutput(fvk.ovk, pk, 25000, {});
         auto maybe_tx = builder.Build();
         ASSERT_EQ(static_cast<bool>(maybe_tx), true);
         auto tx = maybe_tx.get();
@@ -315,7 +315,7 @@ TEST(TransactionBuilder, SetFee)
     {
         auto builder = TransactionBuilder(consensusParams, 1);
         ASSERT_TRUE(builder.AddSaplingSpend(expsk, note, anchor, witness));
-        builder.AddSaplingOutput(fvk, pk, 25000, {});
+        builder.AddSaplingOutput(fvk.ovk, pk, 25000, {});
         builder.SetFee(20000);
         auto maybe_tx = builder.Build();
         ASSERT_EQ(static_cast<bool>(maybe_tx), true);
@@ -331,5 +331,40 @@ TEST(TransactionBuilder, SetFee)
 
     // Revert to default
     UpdateNetworkUpgradeParameters(Consensus::UPGRADE_SAPLING, Consensus::NetworkUpgrade::NO_ACTIVATION_HEIGHT);
+    UpdateNetworkUpgradeParameters(Consensus::UPGRADE_OVERWINTER, Consensus::NetworkUpgrade::NO_ACTIVATION_HEIGHT);
+}
+
+TEST(TransactionBuilder, CheckSaplingTxVersion)
+{
+    SelectParams(CBaseChainParams::REGTEST);
+    UpdateNetworkUpgradeParameters(Consensus::UPGRADE_OVERWINTER, Consensus::NetworkUpgrade::ALWAYS_ACTIVE);
+    auto consensusParams = Params().GetConsensus();
+
+    auto sk = libzcash::SaplingSpendingKey::random();
+    auto expsk = sk.expanded_spending_key();
+    auto pk = sk.default_address();
+
+    // Cannot add Sapling outputs to a non-Sapling transaction
+    auto builder = TransactionBuilder(consensusParams, 1);
+    try {
+        builder.AddSaplingOutput(uint256(), pk, 12345, {});
+    } catch (std::runtime_error const & err) {
+        EXPECT_EQ(err.what(), std::string("TransactionBuilder cannot add Sapling output to pre-Sapling transaction"));
+    } catch(...) {
+        FAIL() << "Expected std::runtime_error";
+    }
+
+    // Cannot add Sapling spends to a non-Sapling transaction
+    libzcash::SaplingNote note(pk, 50000);
+    SaplingMerkleTree tree;
+    try {
+        builder.AddSaplingSpend(expsk, note, uint256(), tree.witness());
+    } catch (std::runtime_error const & err) {
+        EXPECT_EQ(err.what(), std::string("TransactionBuilder cannot add Sapling spend to pre-Sapling transaction"));
+    } catch(...) {
+        FAIL() << "Expected std::runtime_error";
+    }
+
+    // Revert to default
     UpdateNetworkUpgradeParameters(Consensus::UPGRADE_OVERWINTER, Consensus::NetworkUpgrade::NO_ACTIVATION_HEIGHT);
 }
