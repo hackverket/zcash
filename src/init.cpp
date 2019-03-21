@@ -28,6 +28,7 @@
 #include "rpc/server.h"
 #include "rpc/register.h"
 #include "script/standard.h"
+#include "script/sigcache.h"
 #include "scheduler.h"
 #include "txdb.h"
 #include "torcontrol.h"
@@ -203,11 +204,7 @@ void Shutdown()
         pwalletMain->Flush(false);
 #endif
 #ifdef ENABLE_MINING
- #ifdef ENABLE_WALLET
-    GenerateBitcoins(false, NULL, 0);
- #else
-    GenerateBitcoins(false, 0);
- #endif
+    GenerateBitcoins(false, 0, Params());
 #endif
     StopNode();
     StopTorControl();
@@ -470,7 +467,7 @@ std::string HelpMessage(HelpMessageMode mode)
     {
         strUsage += HelpMessageOpt("-limitfreerelay=<n>", strprintf("Continuously rate-limit free transactions to <n>*1000 bytes per minute (default: %u)", 15));
         strUsage += HelpMessageOpt("-relaypriority", strprintf("Require high priority for relaying free or low-fee transactions (default: %u)", 0));
-        strUsage += HelpMessageOpt("-maxsigcachesize=<n>", strprintf("Limit size of signature cache to <n> entries (default: %u)", 50000));
+        strUsage += HelpMessageOpt("-maxsigcachesize=<n>", strprintf("Limit size of signature cache to <n> MiB (default: %u)", DEFAULT_MAX_SIG_CACHE_SIZE));
         strUsage += HelpMessageOpt("-maxtipage=<n>", strprintf("Maximum tip age in seconds to consider node in initial block download (default: %u)", DEFAULT_MAX_TIP_AGE));
     }
     strUsage += HelpMessageOpt("-minrelaytxfee=<amt>", strprintf(_("Fees (in %s/kB) smaller than this are considered zero fee for relaying (default: %s)"),
@@ -842,6 +839,8 @@ bool AppInit2(boost::thread_group& threadGroup, CScheduler& scheduler)
             return InitError(_("Payment disclosure requires -experimentalfeatures."));
         } else if (mapArgs.count("-zmergetoaddress")) {
             return InitError(_("RPC method z_mergetoaddress requires -experimentalfeatures."));
+        } else if (mapArgs.count("-savesproutr1cs")) {
+            return InitError(_("Saving the Sprout R1CS requires -experimentalfeatures."));
         }
     }
 
@@ -1220,6 +1219,14 @@ bool AppInit2(boost::thread_group& threadGroup, CScheduler& scheduler)
 
     // Initialize Zcash circuit parameters
     ZC_LoadParams(chainparams);
+
+    if (GetBoolArg("-savesproutr1cs", false)) {
+        boost::filesystem::path r1cs_path = ZC_GetParamsDir() / "r1cs";
+
+        LogPrintf("Saving Sprout R1CS to %s\n", r1cs_path.string());
+
+        pzcashParams->saveR1CS(r1cs_path.string());
+    }
 
     /* Start the RPC server already.  It will be started in "warmup" mode
      * and not really process calls already (but it will signify connections
@@ -1730,7 +1737,7 @@ bool AppInit2(boost::thread_group& threadGroup, CScheduler& scheduler)
  #ifdef ENABLE_WALLET
         bool minerAddressInLocalWallet = false;
         if (pwalletMain) {
-            // Address has alreday been validated
+            // Address has already been validated
             CTxDestination addr = DecodeDestination(mapArgs["-mineraddress"]);
             CKeyID keyID = boost::get<CKeyID>(addr);
             minerAddressInLocalWallet = pwalletMain->HaveKey(keyID);
@@ -1739,6 +1746,22 @@ bool AppInit2(boost::thread_group& threadGroup, CScheduler& scheduler)
             return InitError(_("-mineraddress is not in the local wallet. Either use a local address, or set -minetolocalwallet=0"));
         }
  #endif // ENABLE_WALLET
+
+        // This is leveraging the fact that boost::signals2 executes connected
+        // handlers in-order. Further up, the wallet is connected to this signal
+        // if the wallet is enabled. The wallet's ScriptForMining handler does
+        // nothing if -mineraddress is set, and GetScriptForMinerAddress() does
+        // nothing if -mineraddress is not set (or set to an invalid address).
+        //
+        // The upshot is that when ScriptForMining(script) is called:
+        // - If -mineraddress is set (whether or not the wallet is enabled), the
+        //   CScript argument is set to -mineraddress.
+        // - If the wallet is enabled and -mineraddress is not set, the CScript
+        //   argument is set to a wallet address.
+        // - If the wallet is disabled and -mineraddress is not set, the CScript
+        //   argument is not modified; in practice this means it is empty, and
+        //   GenerateBitcoins() returns an error.
+        GetMainSignals().ScriptForMining.connect(GetScriptForMinerAddress);
     }
 #endif // ENABLE_MINING
 
@@ -1809,12 +1832,7 @@ bool AppInit2(boost::thread_group& threadGroup, CScheduler& scheduler)
 
 #ifdef ENABLE_MINING
     // Generate coins in the background
- #ifdef ENABLE_WALLET
-    if (pwalletMain || !GetArg("-mineraddress", "").empty())
-        GenerateBitcoins(GetBoolArg("-gen", false), pwalletMain, GetArg("-genproclimit", 1));
- #else
-    GenerateBitcoins(GetBoolArg("-gen", false), GetArg("-genproclimit", 1));
- #endif
+    GenerateBitcoins(GetBoolArg("-gen", false), GetArg("-genproclimit", 1), Params());
 #endif
 
     // ********************************************************* Step 11: finished
