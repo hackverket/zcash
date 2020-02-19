@@ -2,12 +2,12 @@ dnl require autoconf 2.60 (AS_ECHO/AS_ECHO_N)
 AC_PREREQ([2.60])
 define(_CLIENT_VERSION_MAJOR, 2)
 define(_CLIENT_VERSION_MINOR, 1)
-define(_CLIENT_VERSION_REVISION, 0)
+define(_CLIENT_VERSION_REVISION, 1)
 define(_CLIENT_VERSION_BUILD, 51)
 define(_ZC_BUILD_VAL, m4_if(m4_eval(_CLIENT_VERSION_BUILD < 25), 1, m4_incr(_CLIENT_VERSION_BUILD), m4_eval(_CLIENT_VERSION_BUILD < 50), 1, m4_eval(_CLIENT_VERSION_BUILD - 24), m4_eval(_CLIENT_VERSION_BUILD == 50), 1, , m4_eval(_CLIENT_VERSION_BUILD - 50)))
 define(_CLIENT_VERSION_SUFFIX, m4_if(m4_eval(_CLIENT_VERSION_BUILD < 25), 1, _CLIENT_VERSION_REVISION-beta$1, m4_eval(_CLIENT_VERSION_BUILD < 50), 1, _CLIENT_VERSION_REVISION-rc$1, m4_eval(_CLIENT_VERSION_BUILD == 50), 1, _CLIENT_VERSION_REVISION, _CLIENT_VERSION_REVISION-$1)))
 define(_CLIENT_VERSION_IS_RELEASE, true)
-define(_COPYRIGHT_YEAR, 2019)
+define(_COPYRIGHT_YEAR, 2020)
 AC_INIT([Zcash],[_CLIENT_VERSION_MAJOR._CLIENT_VERSION_MINOR._CLIENT_VERSION_SUFFIX(_ZC_BUILD_VAL)],[https://github.com/zcash/zcash/issues],[zcash])
 AC_CONFIG_SRCDIR([src/main.cpp])
 AC_CONFIG_HEADERS([src/config/bitcoin-config.h])
@@ -106,6 +106,12 @@ AC_ARG_ENABLE(tests,
     AS_HELP_STRING([--enable-tests],[compile tests (default is yes)]),
     [use_tests=$enableval],
     [use_tests=yes])
+
+AC_ARG_ENABLE([fuzz-main],
+  [AS_HELP_STRING([--enable-fuzz-main],
+  [Replace main() with a stub for fuzzing (default is no)])],
+  [use_fuzz_main=$enableval],
+  [use_fuzz_main=no])
 
 AC_ARG_ENABLE([asan],
   [AS_HELP_STRING([--enable-asan],
@@ -447,6 +453,11 @@ if test x$TARGET_OS != xwindows; then
   AX_CHECK_COMPILE_FLAG([-fPIC],[PIC_FLAGS="-fPIC"])
 fi
 
+if test x$use_fuzz_main == xyes; then
+    CFLAGS="$CFLAGS -DZCASH_FUZZ=1"
+    CXXFLAGS="$CXXFLAGS -DZCASH_FUZZ=1"
+fi
+
 #asan and tsan cannot be used together
 if test x$use_asan$use_tsan == xyesyes; then
   AC_MSG_ERROR(asan and tsan cannot be simultaneously enabled)
@@ -483,7 +494,7 @@ if test x$use_hardening != xno; then
     HARDENED_CPPFLAGS="$HARDENED_CPPFLAGS -D_FORTIFY_SOURCE=2"
   ],[AC_MSG_ERROR(Cannot enable -D_FORTIFY_SOURCE=2)])
 
-  if test x$BUILD_OS = xdarwin || test x$TARGET_OS = xwindows; then
+  if test x$TARGET_OS = xdarwin || test x$TARGET_OS = xwindows; then
     # Xcode's ld (at least ld64-302.3) doesn't support -z
     # mingw-w64's ld (at least mingw-w64 4.0.4-2) also appears to not support -z
     AX_CHECK_LINK_FLAG([[-Wl,-z,relro]], [HARDENED_LDFLAGS="$HARDENED_LDFLAGS -Wl,-z,relro"],[AC_MSG_WARN(Cannot enable RELRO)])

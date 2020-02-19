@@ -18,7 +18,7 @@ testScripts=(
     'wallet_changeaddresses.py'
     'wallet_changeindicator.py'
     'wallet_import_export.py'
-    'wallet_protectcoinbase.py'
+    'wallet_shieldingcoinbase.py'
     'wallet_shieldcoinbase_sprout.py'
     'wallet_shieldcoinbase_sapling.py'
     'wallet_listreceived.py'
@@ -47,6 +47,7 @@ testScripts=(
     'mempool_nu_activation.py'
     'mempool_tx_expiry.py'
     'httpbasics.py'
+    'multi_rpc.py'
     'zapwallettxes.py'
     'proxy_test.py'
     'merkle_blocks.py'
@@ -120,13 +121,14 @@ function runTestScript
 
     echo -e "=== Running testscript ${testName} ==="
 
+    local startTime=$(date +%s)
     if eval "$@"
     then
         successCount=$(expr $successCount + 1)
-        echo "--- Success: ${testName} ---"
+        echo "--- Success: ${testName} ($(($(date +%s) - $startTime))s) ---"
     else
         failures[${#failures[@]}]="$testName"
-        echo "!!! FAIL: ${testName} !!!"
+        echo "!!! FAIL: ${testName} ($(($(date +%s) - $startTime))s) !!!"
     fi
 
     echo

@@ -40,7 +40,7 @@ static proxyType proxyInfo[NET_MAX];
 static proxyType nameProxy;
 static CCriticalSection cs_proxyInfos;
 int nConnectTimeout = DEFAULT_CONNECT_TIMEOUT;
-bool fNameLookup = false;
+bool fNameLookup = DEFAULT_NAME_LOOKUP;
 
 static const unsigned char pchIPv4[12] = { 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0xff, 0xff };
 
@@ -254,7 +254,13 @@ bool static InterruptibleRecv(uint8_t* data, size_t len, int timeout, SOCKET& hS
     // to break off in case of an interruption.
     const int64_t maxWait = 1000;
     while (len > 0 && curTime < endTime) {
-        ssize_t ret = recv(hSocket, data, len, 0); // Optimistically try the recv first
+        // Optimistically try the recv first.
+        //
+        // POSIX recv() does not require a cast, as it takes a void *buf:
+        //     ssize_t recv(int sockfd, void *buf, size_t len, int flags);
+        // However Windows explicitly requires a char *buf:
+        //     int recv(SOCKET s, char *buf, int len, int flags);
+        ssize_t ret = recv(hSocket, reinterpret_cast<char*>(data), len, 0);
         if (ret > 0) {
             len -= ret;
             data += ret;

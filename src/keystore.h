@@ -23,7 +23,6 @@ class CKeyStore
 {
 protected:
     mutable CCriticalSection cs_KeyStore;
-    mutable CCriticalSection cs_SpendingKeyStore;
 
 public:
     virtual ~CKeyStore() {}
@@ -42,7 +41,7 @@ public:
     virtual bool HaveKey(const CKeyID &address) const =0;
     virtual bool GetKey(const CKeyID &address, CKey& keyOut) const =0;
     virtual void GetKeys(std::set<CKeyID> &setAddress) const =0;
-    virtual bool GetPubKey(const CKeyID &address, CPubKey& vchPubKeyOut) const;
+    virtual bool GetPubKey(const CKeyID &address, CPubKey& vchPubKeyOut) const =0;
 
     //! Support for BIP 0013 : see https://github.com/bitcoin/bips/blob/master/bip-0013.mediawiki
     virtual bool AddCScript(const CScript& redeemScript) =0;
@@ -101,6 +100,7 @@ public:
 };
 
 typedef std::map<CKeyID, CKey> KeyMap;
+typedef std::map<CKeyID, CPubKey> WatchKeyMap;
 typedef std::map<CScriptID, CScript > ScriptMap;
 typedef std::set<CScript> WatchOnlySet;
 typedef std::map<libzcash::SproutPaymentAddress, libzcash::SproutSpendingKey> SproutSpendingKeyMap;
@@ -120,6 +120,7 @@ class CBasicKeyStore : public CKeyStore
 protected:
     HDSeed hdSeed;
     KeyMap mapKeys;
+    WatchKeyMap mapWatchKeys;
     ScriptMap mapScripts;
     WatchOnlySet setWatchOnly;
     SproutSpendingKeyMap mapSproutSpendingKeys;
@@ -136,6 +137,7 @@ public:
     bool GetHDSeed(HDSeed& seedOut) const;
 
     bool AddKeyPubKey(const CKey& key, const CPubKey &pubkey);
+    bool GetPubKey(const CKeyID &address, CPubKey& vchPubKeyOut) const;
     bool HaveKey(const CKeyID &address) const
     {
         bool result;
@@ -185,7 +187,7 @@ public:
     {
         bool result;
         {
-            LOCK(cs_SpendingKeyStore);
+            LOCK(cs_KeyStore);
             result = (mapSproutSpendingKeys.count(address) > 0);
         }
         return result;
@@ -193,7 +195,7 @@ public:
     bool GetSproutSpendingKey(const libzcash::SproutPaymentAddress &address, libzcash::SproutSpendingKey &skOut) const
     {
         {
-            LOCK(cs_SpendingKeyStore);
+            LOCK(cs_KeyStore);
             SproutSpendingKeyMap::const_iterator mi = mapSproutSpendingKeys.find(address);
             if (mi != mapSproutSpendingKeys.end())
             {
@@ -206,7 +208,7 @@ public:
     bool GetNoteDecryptor(const libzcash::SproutPaymentAddress &address, ZCNoteDecryption &decOut) const
     {
         {
-            LOCK(cs_SpendingKeyStore);
+            LOCK(cs_KeyStore);
             NoteDecryptorMap::const_iterator mi = mapNoteDecryptors.find(address);
             if (mi != mapNoteDecryptors.end())
             {
@@ -220,7 +222,7 @@ public:
     {
         setAddress.clear();
         {
-            LOCK(cs_SpendingKeyStore);
+            LOCK(cs_KeyStore);
             SproutSpendingKeyMap::const_iterator mi = mapSproutSpendingKeys.begin();
             while (mi != mapSproutSpendingKeys.end())
             {
@@ -244,7 +246,7 @@ public:
     {
         bool result;
         {
-            LOCK(cs_SpendingKeyStore);
+            LOCK(cs_KeyStore);
             result = (mapSaplingSpendingKeys.count(fvk) > 0);
         }
         return result;
@@ -252,7 +254,7 @@ public:
     bool GetSaplingSpendingKey(const libzcash::SaplingFullViewingKey &fvk, libzcash::SaplingExtendedSpendingKey &skOut) const
     {
         {
-            LOCK(cs_SpendingKeyStore);
+            LOCK(cs_KeyStore);
             
             SaplingSpendingKeyMap::const_iterator mi = mapSaplingSpendingKeys.find(fvk);
             if (mi != mapSaplingSpendingKeys.end())
@@ -288,7 +290,7 @@ public:
     {
         setAddress.clear();
         {
-            LOCK(cs_SpendingKeyStore);
+            LOCK(cs_KeyStore);
             auto mi = mapSaplingIncomingViewingKeys.begin();
             while (mi != mapSaplingIncomingViewingKeys.end())
             {

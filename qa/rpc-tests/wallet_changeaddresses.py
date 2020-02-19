@@ -27,8 +27,7 @@ class WalletChangeAddressesTest(BitcoinTestFramework):
         args = [
             '-nuparams=5ba81b19:1', # Overwinter
             '-nuparams=76b809bb:1', # Sapling
-            '-txindex',             # Avoid JSONRPC error: No information available about transaction
-            '-experimentalfeatures', '-zmergetoaddress',
+            '-txindex'              # Avoid JSONRPC error: No information available about transaction
         ]
         self.nodes = []
         self.nodes.append(start_node(0, self.options.tmpdir, args))
@@ -49,8 +48,9 @@ class WalletChangeAddressesTest(BitcoinTestFramework):
         taddrSource = self.nodes[0].getnewaddress()
         for _ in range(6):
             recipients = [{"address": taddrSource, "amount": Decimal('2')}]
-            myopid = self.nodes[0].z_sendmany(midAddr, recipients, 1, 0)
+            myopid = self.nodes[0].z_sendmany(midAddr, recipients, 1, Decimal('0'))
             wait_and_assert_operationid_status(self.nodes[0], myopid)
+            self.sync_all()
             self.nodes[1].generate(1)
             self.sync_all()
 
@@ -58,11 +58,11 @@ class WalletChangeAddressesTest(BitcoinTestFramework):
             recipients = [{"address": target, "amount": Decimal('1')}]
 
             # Send funds to recipient address twice
-            myopid = self.nodes[0].z_sendmany(taddrSource, recipients, 1, 0)
+            myopid = self.nodes[0].z_sendmany(taddrSource, recipients, 1, Decimal('0'))
             txid1 = wait_and_assert_operationid_status(self.nodes[0], myopid)
             self.nodes[1].generate(1)
             self.sync_all()
-            myopid = self.nodes[0].z_sendmany(taddrSource, recipients, 1, 0)
+            myopid = self.nodes[0].z_sendmany(taddrSource, recipients, 1, Decimal('0'))
             txid2 = wait_and_assert_operationid_status(self.nodes[0], myopid)
             self.nodes[1].generate(1)
             self.sync_all()
