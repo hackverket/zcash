@@ -165,13 +165,13 @@ bool AsyncRPCOperation_saplingmigration::main_impl() {
 
 void AsyncRPCOperation_saplingmigration::setMigrationResult(int numTxCreated, const CAmount& amountMigrated, const std::vector<std::string>& migrationTxIds) {
     UniValue res(UniValue::VOBJ);
-    res.push_back(Pair("num_tx_created", numTxCreated));
-    res.push_back(Pair("amount_migrated", FormatMoney(amountMigrated)));
+    res.pushKV("num_tx_created", numTxCreated);
+    res.pushKV("amount_migrated", FormatMoney(amountMigrated));
     UniValue txIds(UniValue::VARR);
     for (const std::string& txId : migrationTxIds) {
         txIds.push_back(txId);
     }
-    res.push_back(Pair("migration_txids", txIds));
+    res.pushKV("migration_txids", txIds);
     set_result(res);
 }
 
@@ -214,12 +214,7 @@ libzcash::SaplingPaymentAddress AsyncRPCOperation_saplingmigration::getMigration
 
     libzcash::SaplingPaymentAddress toAddress = xsk.DefaultAddress();
 
-    // Refactor: this is similar logic as in the visitor HaveSpendingKeyForPaymentAddress and is used elsewhere
-    libzcash::SaplingIncomingViewingKey ivk;
-    libzcash::SaplingFullViewingKey fvk;
-    if (!(pwalletMain->GetSaplingIncomingViewingKey(toAddress, ivk) &&
-        pwalletMain->GetSaplingFullViewingKey(ivk, fvk) &&
-        pwalletMain->HaveSaplingSpendingKey(fvk))) {
+    if (!HaveSpendingKeyForPaymentAddress(pwalletMain)(toAddress)) {
         // Sapling account 0 must be the first address returned by GenerateNewSaplingZKey
         assert(pwalletMain->GenerateNewSaplingZKey() == toAddress);
     }
@@ -234,7 +229,7 @@ void AsyncRPCOperation_saplingmigration::cancel() {
 UniValue AsyncRPCOperation_saplingmigration::getStatus() const {
     UniValue v = AsyncRPCOperation::getStatus();
     UniValue obj = v.get_obj();
-    obj.push_back(Pair("method", "saplingmigration"));
-    obj.push_back(Pair("target_height", targetHeight_));
+    obj.pushKV("method", "saplingmigration");
+    obj.pushKV("target_height", targetHeight_);
     return obj;
 }
