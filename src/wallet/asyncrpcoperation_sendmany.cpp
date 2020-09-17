@@ -15,6 +15,7 @@
 #include "main.h"
 #include "net.h"
 #include "netbase.h"
+#include "proof_verifier.h"
 #include "rpc/protocol.h"
 #include "rpc/server.h"
 #include "timedata.h"
@@ -25,7 +26,6 @@
 #include "script/interpreter.h"
 #include "utiltime.h"
 #include "zcash/IncrementalMerkleTree.hpp"
-#include "sodium.h"
 #include "miner.h"
 #include "wallet/paymentdisclosuredb.h"
 
@@ -34,6 +34,8 @@
 #include <chrono>
 #include <thread>
 #include <string>
+
+#include <rust/ed25519.h>
 
 using namespace libzcash;
 
@@ -85,12 +87,14 @@ AsyncRPCOperation_sendmany::AsyncRPCOperation_sendmany(
         builder_ = builder.get();
     }
 
-    fromtaddr_ = DecodeDestination(fromAddress);
+    KeyIO keyIO(Params());
+
+    fromtaddr_ = keyIO.DecodeDestination(fromAddress);
     isfromtaddr_ = IsValidDestination(fromtaddr_);
     isfromzaddr_ = false;
 
     if (!isfromtaddr_) {
-        auto address = DecodePaymentAddress(fromAddress);
+        auto address = keyIO.DecodePaymentAddress(fromAddress);
         if (IsValidPaymentAddress(address)) {
             // We don't need to lock on the wallet as spending key related methods are thread-safe
             if (!boost::apply_visitor(HaveSpendingKeyForPaymentAddress(pwalletMain), address)) {
@@ -335,14 +339,20 @@ bool AsyncRPCOperation_sendmany::main_impl() {
         }
     }
 
-    LogPrint((isfromtaddr_) ? "zrpc" : "zrpcunsafe", "%s: spending %s to send %s with fee %s\n",
+    if (isfromtaddr_) {
+        LogPrint("zrpc", "%s: spending %s to send %s with fee %s\n",
             getId(), FormatMoney(targetAmount), FormatMoney(sendAmount), FormatMoney(minersFee));
+    } else {
+        LogPrint("zrpcunsafe", "%s: spending %s to send %s with fee %s\n",
+            getId(), FormatMoney(targetAmount), FormatMoney(sendAmount), FormatMoney(minersFee));
+    }
     LogPrint("zrpc", "%s: transparent input: %s (to choose from)\n", getId(), FormatMoney(t_inputs_total));
     LogPrint("zrpcunsafe", "%s: private input: %s (to choose from)\n", getId(), FormatMoney(z_inputs_total));
     LogPrint("zrpc", "%s: transparent output: %s\n", getId(), FormatMoney(t_outputs_total));
     LogPrint("zrpcunsafe", "%s: private output: %s\n", getId(), FormatMoney(z_outputs_total));
     LogPrint("zrpc", "%s: fee: %s\n", getId(), FormatMoney(minersFee));
 
+    KeyIO keyIO(Params());
 
     /**
      * SCENARIO #0
@@ -424,7 +434,7 @@ bool AsyncRPCOperation_sendmany::main_impl() {
             auto value = r.amount;
             auto hexMemo = r.memo;
 
-            auto addr = DecodePaymentAddress(address);
+            auto addr = keyIO.DecodePaymentAddress(address);
             assert(boost::get<libzcash::SaplingPaymentAddress>(&addr) != nullptr);
             auto to = boost::get<libzcash::SaplingPaymentAddress>(addr);
 
@@ -438,7 +448,7 @@ bool AsyncRPCOperation_sendmany::main_impl() {
             auto outputAddress = r.address;
             auto amount = r.amount;
 
-            auto address = DecodeDestination(outputAddress);
+            auto address = keyIO.DecodeDestination(outputAddress);
             builder_.AddTransparentOutput(address, amount);
         }
 
@@ -499,7 +509,7 @@ bool AsyncRPCOperation_sendmany::main_impl() {
     
     // Prepare raw transaction to handle JoinSplits
     CMutableTransaction mtx(tx_);
-    crypto_sign_keypair(joinSplitPubKey_.begin(), joinSplitPrivKey_);
+    ed25519_generate_keypair(&joinSplitPrivKey_, &joinSplitPubKey_);
     mtx.joinSplitPubKey = joinSplitPubKey_;
     tx_ = CTransaction(mtx);
 
@@ -583,7 +593,7 @@ bool AsyncRPCOperation_sendmany::main_impl() {
                 std::string hexMemo = smr.memo;
                 zOutputsDeque.pop_front();
 
-                PaymentAddress pa = DecodePaymentAddress(address);
+                PaymentAddress pa = keyIO.DecodePaymentAddress(address);
                 JSOutput jso = JSOutput(boost::get<libzcash::SproutPaymentAddress>(pa), value);
                 if (hexMemo.size() > 0) {
                     jso.memo = get_memo_from_hex_string(hexMemo);
@@ -688,7 +698,7 @@ bool AsyncRPCOperation_sendmany::main_impl() {
 
             // Decrypt the change note's ciphertext to retrieve some data we need
             ZCNoteDecryption decryptor(boost::get<libzcash::SproutSpendingKey>(spendingkey_).receiving_key());
-            auto hSig = prevJoinSplit.h_sig(*pzcashParams, tx_.joinSplitPubKey);
+            auto hSig = prevJoinSplit.h_sig(tx_.joinSplitPubKey);
             try {
                 SproutNotePlaintext plaintext = SproutNotePlaintext::decrypt(
                         decryptor,
@@ -845,7 +855,7 @@ bool AsyncRPCOperation_sendmany::main_impl() {
             assert(value==0);
             info.vjsout.push_back(JSOutput());  // dummy output while we accumulate funds into a change note for vpub_new
         } else {
-            PaymentAddress pa = DecodePaymentAddress(address);
+            PaymentAddress pa = keyIO.DecodePaymentAddress(address);
             // If we are here, we know we have no Sapling outputs.
             JSOutput jso = JSOutput(boost::get<libzcash::SproutPaymentAddress>(pa), value);
             if (hexMemo.size() > 0) {
@@ -1066,7 +1076,6 @@ UniValue AsyncRPCOperation_sendmany::perform_joinsplit(
 
     assert(mtx.fOverwintered && (mtx.nVersion >= SAPLING_TX_VERSION));
     JSDescription jsdesc = JSDescription::Randomized(
-            *pzcashParams,
             joinSplitPubKey_,
             anchor,
             inputs,
@@ -1078,8 +1087,8 @@ UniValue AsyncRPCOperation_sendmany::perform_joinsplit(
             !this->testmode,
             &esk); // parameter expects pointer to esk, so pass in address
     {
-        auto verifier = libzcash::ProofVerifier::Strict();
-        if (!(jsdesc.Verify(*pzcashParams, verifier, joinSplitPubKey_))) {
+        auto verifier = ProofVerifier::Strict();
+        if (!(verifier.VerifySprout(jsdesc, joinSplitPubKey_))) {
             throw std::runtime_error("error verifying joinsplit");
         }
     }
@@ -1092,21 +1101,21 @@ UniValue AsyncRPCOperation_sendmany::perform_joinsplit(
     uint256 dataToBeSigned = SignatureHash(scriptCode, signTx, NOT_AN_INPUT, SIGHASH_ALL, 0, consensusBranchId_);
 
     // Add the signature
-    if (!(crypto_sign_detached(&mtx.joinSplitSig[0], NULL,
-            dataToBeSigned.begin(), 32,
-            joinSplitPrivKey_
-            ) == 0))
+    if (!ed25519_sign(
+        &joinSplitPrivKey_,
+        dataToBeSigned.begin(), 32,
+        &mtx.joinSplitSig))
     {
-        throw std::runtime_error("crypto_sign_detached failed");
+        throw std::runtime_error("ed25519_sign failed");
     }
 
     // Sanity check
-    if (!(crypto_sign_verify_detached(&mtx.joinSplitSig[0],
-            dataToBeSigned.begin(), 32,
-            mtx.joinSplitPubKey.begin()
-            ) == 0))
+    if (!ed25519_verify(
+        &mtx.joinSplitPubKey,
+        &mtx.joinSplitSig,
+        dataToBeSigned.begin(), 32))
     {
-        throw std::runtime_error("crypto_sign_verify_detached failed");
+        throw std::runtime_error("ed25519_verify failed");
     }
 
     CTransaction rawTx(mtx);
@@ -1122,7 +1131,7 @@ UniValue AsyncRPCOperation_sendmany::perform_joinsplit(
         ss2 << ((unsigned char) 0x00);
         ss2 << jsdesc.ephemeralKey;
         ss2 << jsdesc.ciphertexts[0];
-        ss2 << jsdesc.h_sig(*pzcashParams, joinSplitPubKey_);
+        ss2 << jsdesc.h_sig(joinSplitPubKey_);
 
         encryptedNote1 = HexStr(ss2.begin(), ss2.end());
     }
@@ -1131,7 +1140,7 @@ UniValue AsyncRPCOperation_sendmany::perform_joinsplit(
         ss2 << ((unsigned char) 0x01);
         ss2 << jsdesc.ephemeralKey;
         ss2 << jsdesc.ciphertexts[1];
-        ss2 << jsdesc.h_sig(*pzcashParams, joinSplitPubKey_);
+        ss2 << jsdesc.h_sig(joinSplitPubKey_);
 
         encryptedNote2 = HexStr(ss2.begin(), ss2.end());
     }
@@ -1145,12 +1154,9 @@ UniValue AsyncRPCOperation_sendmany::perform_joinsplit(
         arrOutputMap.push_back(static_cast<uint64_t>(outputMap[i]));
     }
 
+    KeyIO keyIO(Params());
 
     // !!! Payment disclosure START
-    unsigned char buffer[32] = {0};
-    memcpy(&buffer[0], &joinSplitPrivKey_[0], 32); // private key in first half of 64 byte buffer
-    std::vector<unsigned char> vch(&buffer[0], &buffer[0] + 32);
-    uint256 joinSplitPrivKey = uint256(vch);
     size_t js_index = tx_.vJoinSplit.size() - 1;
     uint256 placeholder;
     for (int i = 0; i < ZC_NUM_JS_OUTPUTS; i++) {
@@ -1159,10 +1165,10 @@ UniValue AsyncRPCOperation_sendmany::perform_joinsplit(
         PaymentDisclosureKey pdKey = {placeholder, js_index, mapped_index};
         JSOutput output = outputs[mapped_index];
         libzcash::SproutPaymentAddress zaddr = output.addr;  // randomized output
-        PaymentDisclosureInfo pdInfo = {PAYMENT_DISCLOSURE_VERSION_EXPERIMENTAL, esk, joinSplitPrivKey, zaddr};
+        PaymentDisclosureInfo pdInfo = {PAYMENT_DISCLOSURE_VERSION_EXPERIMENTAL, esk, joinSplitPrivKey_, zaddr};
         paymentDisclosureData_.push_back(PaymentDisclosureKeyInfo(pdKey, pdInfo));
 
-        LogPrint("paymentdisclosure", "%s: Payment Disclosure: js=%d, n=%d, zaddr=%s\n", getId(), js_index, int(mapped_index), EncodePaymentAddress(zaddr));
+        LogPrint("paymentdisclosure", "%s: Payment Disclosure: js=%d, n=%d, zaddr=%s\n", getId(), js_index, int(mapped_index), keyIO.EncodePaymentAddress(zaddr));
     }
     // !!! Payment disclosure END
 
@@ -1179,11 +1185,13 @@ void AsyncRPCOperation_sendmany::add_taddr_outputs_to_tx() {
 
     CMutableTransaction rawTx(tx_);
 
+    KeyIO keyIO(Params());
+
     for (SendManyRecipient & r : t_outputs_) {
         std::string outputAddress = r.address;
         CAmount nAmount = r.amount;
 
-        CTxDestination address = DecodeDestination(outputAddress);
+        CTxDestination address = keyIO.DecodeDestination(outputAddress);
         if (!IsValidDestination(address)) {
             throw JSONRPCError(RPC_INVALID_ADDRESS_OR_KEY, "Invalid output address, not a valid taddr.");
         }

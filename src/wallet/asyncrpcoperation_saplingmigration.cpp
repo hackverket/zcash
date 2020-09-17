@@ -110,7 +110,7 @@ bool AsyncRPCOperation_saplingmigration::main_impl() {
     CCoinsViewCache coinsView(pcoinsTip);
     do {
         CAmount amountToSend = chooseAmount(availableFunds);
-        auto builder = TransactionBuilder(consensusParams, targetHeight_, pwalletMain, pzcashParams, &coinsView, &cs_main);
+        auto builder = TransactionBuilder(consensusParams, targetHeight_, pwalletMain, &coinsView, &cs_main);
         builder.SetExpiryHeight(targetHeight_ + MIGRATION_EXPIRY_DELTA);
         LogPrint("zrpcunsafe", "%s: Beginning creating transaction with Sapling output amount=%s\n", getId(), FormatMoney(amountToSend - FEE));
         std::vector<SproutNoteEntry> fromNotes;
@@ -192,9 +192,10 @@ CAmount AsyncRPCOperation_saplingmigration::chooseAmount(const CAmount& availabl
 
 // Unless otherwise specified, the migration destination address is the address for Sapling account 0
 libzcash::SaplingPaymentAddress AsyncRPCOperation_saplingmigration::getMigrationDestAddress(const HDSeed& seed) {
+    KeyIO keyIO(Params());
     if (mapArgs.count("-migrationdestaddress")) {
         std::string migrationDestAddress = mapArgs["-migrationdestaddress"];
-        auto address = DecodePaymentAddress(migrationDestAddress);
+        auto address = keyIO.DecodePaymentAddress(migrationDestAddress);
         auto saplingAddress = boost::get<libzcash::SaplingPaymentAddress>(&address);
         assert(saplingAddress != nullptr); // This is checked in init.cpp
         return *saplingAddress;

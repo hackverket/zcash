@@ -18,6 +18,7 @@
 #include "net.h"
 #include "primitives/block.h"
 #include "primitives/transaction.h"
+#include "proof_verifier.h"
 #include "script/script.h"
 #include "script/sigcache.h"
 #include "script/standard.h"
@@ -344,7 +345,7 @@ void UpdateCoins(const CTransaction& tx, CCoinsViewCache& inputs, int nHeight);
 /** Transaction validation functions */
 
 /** Context-independent validity checks */
-bool CheckTransaction(const CTransaction& tx, CValidationState& state, libzcash::ProofVerifier& verifier);
+bool CheckTransaction(const CTransaction& tx, CValidationState& state, ProofVerifier& verifier);
 bool CheckTransactionWithoutProofVerification(const CTransaction& tx, CValidationState &state);
 
 namespace Consensus {
@@ -436,7 +437,7 @@ bool GetTimestampIndex(unsigned int high, unsigned int low, bool fActiveOnly,
 
 /** Functions for disk access for blocks */
 bool WriteBlockToDisk(const CBlock& block, CDiskBlockPos& pos, const CMessageHeader::MessageStartChars& messageStart);
-bool ReadBlockFromDisk(CBlock& block, const CDiskBlockPos& pos, int nHeight, const Consensus::Params& consensusParams);
+bool ReadBlockFromDisk(CBlock& block, const CDiskBlockPos& pos, const Consensus::Params& consensusParams);
 bool ReadBlockFromDisk(CBlock& block, const CBlockIndex* pindex, const Consensus::Params& consensusParams);
 
 /** Functions for validating blocks and updating the block tree */
@@ -447,15 +448,14 @@ bool CheckBlockHeader(const CBlockHeader& block, CValidationState& state,
     bool fCheckPOW = true);
 bool CheckBlock(const CBlock& block, CValidationState& state,
                 const CChainParams& chainparams,
-                libzcash::ProofVerifier& verifier,
+                ProofVerifier& verifier,
                 bool fCheckPOW = true, bool fCheckMerkleRoot = true);
 
 /** Context-dependent validity checks.
  *  By "context", we mean only the previous block headers, but not the UTXO
  *  set; UTXO-related validity checks are done in ConnectBlock(). */
 bool ContextualCheckBlockHeader(const CBlockHeader& block, CValidationState& state,
-                                const CChainParams& chainparams, CBlockIndex *pindexPrev,
-                                bool fCheckPOW = true);
+                                const CChainParams& chainparams, CBlockIndex *pindexPrev);
 bool ContextualCheckBlock(const CBlock& block, CValidationState& state,
                           const CChainParams& chainparams, CBlockIndex *pindexPrev);
 
@@ -465,7 +465,10 @@ bool ContextualCheckBlock(const CBlock& block, CValidationState& state,
 bool ConnectBlock(const CBlock& block, CValidationState& state, CBlockIndex* pindex, CCoinsViewCache& coins,
                   const CChainParams& chainparams, bool fJustCheck = false);
 
-/** Check a block is completely valid from start to finish (only works on top of our current best block, with cs_main held) */
+/** 
+ * Check a block is completely valid from start to finish (only works on top
+ * of our current best block, with cs_main held) 
+ */
 bool TestBlockValidity(CValidationState& state, const CChainParams& chainparams, const CBlock& block, CBlockIndex* pindexPrev, bool fCheckPOW = true, bool fCheckMerkleRoot = true);
 
 
