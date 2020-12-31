@@ -20,6 +20,19 @@
 #include "crypto/equihash.h"
 #include "util.h"
 
+#include <optional>
+
+#ifdef ENABLE_MINING
+void eh_HashState::Update(const unsigned char *input, size_t inputLen)
+{
+    blake2b_update(inner.get(), input, inputLen);
+}
+
+void eh_HashState::Finalize(unsigned char *hash, size_t hLen)
+{
+    blake2b_finalize(inner.get(), hash, hLen);
+}
+#endif
 
 // Used in TestEquihashValidator.
 
@@ -109,7 +122,7 @@ void ExpandArray(const unsigned char* in, size_t in_len,
 // comparison
 void EhIndexToArray(const eh_index i, unsigned char* array)
 {
-    BOOST_STATIC_ASSERT(sizeof(eh_index) == 4);
+    static_assert(sizeof(eh_index) == 4);
     eh_index bei = htobe32(i);
     memcpy(array, &bei, sizeof(eh_index));
 }
@@ -138,42 +151,35 @@ std::vector<unsigned char> GetMinimalFromIndices(std::vector<eh_index> indices,
 #include <iostream>
 #include <stdexcept>
 
-#include <boost/optional.hpp>
 
 static EhSolverCancelledException solver_cancelled;
 
 template<unsigned int N, unsigned int K>
-int Equihash<N,K>::InitialiseState(eh_HashState& base_state)
+void Equihash<N,K>::InitialiseState(eh_HashState& base_state)
 {
     uint32_t le_N = htole32(N);
     uint32_t le_K = htole32(K);
-    unsigned char personalization[crypto_generichash_blake2b_PERSONALBYTES] = {};
+    unsigned char personalization[BLAKE2bPersonalBytes] = {};
     memcpy(personalization, "ZcashPoW", 8);
     memcpy(personalization+8,  &le_N, 4);
     memcpy(personalization+12, &le_K, 4);
-    return crypto_generichash_blake2b_init_salt_personal(&base_state,
-                                                         NULL, 0, // No key.
-                                                         (512/N)*N/8,
-                                                         NULL,    // No salt.
-                                                         personalization);
+    base_state = eh_HashState((512/N)*N/8, personalization);
 }
 
 void GenerateHash(const eh_HashState& base_state, eh_index g,
                   unsigned char* hash, size_t hLen)
 {
-    eh_HashState state;
-    state = base_state;
+    eh_HashState state(base_state);
     eh_index lei = htole32(g);
-    crypto_generichash_blake2b_update(&state, (const unsigned char*) &lei,
-                                      sizeof(eh_index));
-    crypto_generichash_blake2b_final(&state, hash, hLen);
+    state.Update((const unsigned char*) &lei, sizeof(eh_index));
+    state.Finalize(hash, hLen);
 }
 
 // Big-endian so that lexicographic array comparison is equivalent to integer
 // comparison
 eh_index ArrayToEhIndex(const unsigned char* array)
 {
-    BOOST_STATIC_ASSERT(sizeof(eh_index) == 4);
+    static_assert(sizeof(eh_index) == 4);
     eh_index bei;
     memcpy(&bei, array, sizeof(eh_index));
     return be32toh(bei);
@@ -182,7 +188,7 @@ eh_index ArrayToEhIndex(const unsigned char* array)
 eh_trunc TruncateIndex(const eh_index i, const unsigned int ilen)
 {
     // Truncate to 8 bits
-    BOOST_STATIC_ASSERT(sizeof(eh_trunc) == 1);
+    static_assert(sizeof(eh_trunc) == 1);
     return (i >> (ilen - 8)) & 0xff;
 }
 
@@ -219,7 +225,7 @@ StepRow<WIDTH>::StepRow(const unsigned char* hashIn, size_t hInLen,
 template<size_t WIDTH> template<size_t W>
 StepRow<WIDTH>::StepRow(const StepRow<W>& a)
 {
-    BOOST_STATIC_ASSERT(W <= WIDTH);
+    static_assert(W <= WIDTH);
     std::copy(a.hash, a.hash+W, hash);
 }
 
@@ -232,19 +238,19 @@ FullStepRow<WIDTH>::FullStepRow(const unsigned char* hashIn, size_t hInLen,
 }
 
 template<size_t WIDTH> template<size_t W>
-FullStepRow<WIDTH>::FullStepRow(const FullStepRow<W>& a, const FullStepRow<W>& b, size_t len, size_t lenIndices, int trim) :
+FullStepRow<WIDTH>::FullStepRow(const FullStepRow<W>& a, const FullStepRow<W>& b, size_t len, size_t lenIndices, int lenTrim) :
         StepRow<WIDTH> {a}
 {
     assert(len+lenIndices <= W);
-    assert(len-trim+(2*lenIndices) <= WIDTH);
-    for (int i = trim; i < len; i++)
-        hash[i-trim] = a.hash[i] ^ b.hash[i];
+    assert(len-lenTrim+(2*lenIndices) <= WIDTH);
+    for (int i = lenTrim; i < len; i++)
+        hash[i-lenTrim] = a.hash[i] ^ b.hash[i];
     if (a.IndicesBefore(b, len, lenIndices)) {
-        std::copy(a.hash+len, a.hash+len+lenIndices, hash+len-trim);
-        std::copy(b.hash+len, b.hash+len+lenIndices, hash+len-trim+lenIndices);
+        std::copy(a.hash+len, a.hash+len+lenIndices, hash+len-lenTrim);
+        std::copy(b.hash+len, b.hash+len+lenIndices, hash+len-lenTrim+lenIndices);
     } else {
-        std::copy(b.hash+len, b.hash+len+lenIndices, hash+len-trim);
-        std::copy(a.hash+len, a.hash+len+lenIndices, hash+len-trim+lenIndices);
+        std::copy(b.hash+len, b.hash+len+lenIndices, hash+len-lenTrim);
+        std::copy(a.hash+len, a.hash+len+lenIndices, hash+len-lenTrim+lenIndices);
     }
 }
 
@@ -299,19 +305,19 @@ TruncatedStepRow<WIDTH>::TruncatedStepRow(const unsigned char* hashIn, size_t hI
 }
 
 template<size_t WIDTH> template<size_t W>
-TruncatedStepRow<WIDTH>::TruncatedStepRow(const TruncatedStepRow<W>& a, const TruncatedStepRow<W>& b, size_t len, size_t lenIndices, int trim) :
+TruncatedStepRow<WIDTH>::TruncatedStepRow(const TruncatedStepRow<W>& a, const TruncatedStepRow<W>& b, size_t len, size_t lenIndices, int lenTrim) :
         StepRow<WIDTH> {a}
 {
     assert(len+lenIndices <= W);
-    assert(len-trim+(2*lenIndices) <= WIDTH);
-    for (int i = trim; i < len; i++)
-        hash[i-trim] = a.hash[i] ^ b.hash[i];
+    assert(len-lenTrim+(2*lenIndices) <= WIDTH);
+    for (int i = lenTrim; i < len; i++)
+        hash[i-lenTrim] = a.hash[i] ^ b.hash[i];
     if (a.IndicesBefore(b, len, lenIndices)) {
-        std::copy(a.hash+len, a.hash+len+lenIndices, hash+len-trim);
-        std::copy(b.hash+len, b.hash+len+lenIndices, hash+len-trim+lenIndices);
+        std::copy(a.hash+len, a.hash+len+lenIndices, hash+len-lenTrim);
+        std::copy(b.hash+len, b.hash+len+lenIndices, hash+len-lenTrim+lenIndices);
     } else {
-        std::copy(b.hash+len, b.hash+len+lenIndices, hash+len-trim);
-        std::copy(a.hash+len, a.hash+len+lenIndices, hash+len-trim+lenIndices);
+        std::copy(b.hash+len, b.hash+len+lenIndices, hash+len-lenTrim);
+        std::copy(a.hash+len, a.hash+len+lenIndices, hash+len-lenTrim+lenIndices);
     }
 }
 
@@ -641,7 +647,7 @@ bool Equihash<N,K>::OptimisedSolve(const eh_HashState& base_state,
         size_t hashLen;
         size_t lenIndices;
         unsigned char tmpHash[HashOutput];
-        std::vector<boost::optional<std::vector<FullStepRow<FinalFullWidth>>>> X;
+        std::vector<std::optional<std::vector<FullStepRow<FinalFullWidth>>>> X;
         X.reserve(K+1);
 
         // 3) Repeat steps 1 and 2 for each partial index
@@ -659,7 +665,7 @@ bool Equihash<N,K>::OptimisedSolve(const eh_HashState& base_state,
                                  N/8, HashLength, CollisionBitLength, newIndex);
                 if (cancelled(PartialGeneration)) throw solver_cancelled;
             }
-            boost::optional<std::vector<FullStepRow<FinalFullWidth>>> ic = icv;
+            std::optional<std::vector<FullStepRow<FinalFullWidth>>> ic = icv;
 
             // 2a) For each pair of lists:
             hashLen = HashLength;
@@ -684,7 +690,7 @@ bool Equihash<N,K>::OptimisedSolve(const eh_HashState& base_state,
                         if (ic->size() == 0)
                             goto invalidsolution;
 
-                        X[r] = boost::none;
+                        X[r] = std::nullopt;
                         hashLen -= CollisionByteLength;
                         lenIndices *= 2;
                         rti = lti;
@@ -724,7 +730,7 @@ invalidsolution:
 }
 
 // Explicit instantiations for Equihash<96,3>
-template int Equihash<96,3>::InitialiseState(eh_HashState& base_state);
+template void Equihash<96,3>::InitialiseState(eh_HashState& base_state);
 template bool Equihash<96,3>::BasicSolve(const eh_HashState& base_state,
                                          const std::function<bool(std::vector<unsigned char>)> validBlock,
                                          const std::function<bool(EhSolverCancelCheck)> cancelled);
@@ -733,7 +739,7 @@ template bool Equihash<96,3>::OptimisedSolve(const eh_HashState& base_state,
                                              const std::function<bool(EhSolverCancelCheck)> cancelled);
 
 // Explicit instantiations for Equihash<200,9>
-template int Equihash<200,9>::InitialiseState(eh_HashState& base_state);
+template void Equihash<200,9>::InitialiseState(eh_HashState& base_state);
 template bool Equihash<200,9>::BasicSolve(const eh_HashState& base_state,
                                           const std::function<bool(std::vector<unsigned char>)> validBlock,
                                           const std::function<bool(EhSolverCancelCheck)> cancelled);
@@ -742,7 +748,7 @@ template bool Equihash<200,9>::OptimisedSolve(const eh_HashState& base_state,
                                               const std::function<bool(EhSolverCancelCheck)> cancelled);
 
 // Explicit instantiations for Equihash<96,5>
-template int Equihash<96,5>::InitialiseState(eh_HashState& base_state);
+template void Equihash<96,5>::InitialiseState(eh_HashState& base_state);
 template bool Equihash<96,5>::BasicSolve(const eh_HashState& base_state,
                                          const std::function<bool(std::vector<unsigned char>)> validBlock,
                                          const std::function<bool(EhSolverCancelCheck)> cancelled);
@@ -751,7 +757,7 @@ template bool Equihash<96,5>::OptimisedSolve(const eh_HashState& base_state,
                                              const std::function<bool(EhSolverCancelCheck)> cancelled);
 
 // Explicit instantiations for Equihash<48,5>
-template int Equihash<48,5>::InitialiseState(eh_HashState& base_state);
+template void Equihash<48,5>::InitialiseState(eh_HashState& base_state);
 template bool Equihash<48,5>::BasicSolve(const eh_HashState& base_state,
                                          const std::function<bool(std::vector<unsigned char>)> validBlock,
                                          const std::function<bool(EhSolverCancelCheck)> cancelled);

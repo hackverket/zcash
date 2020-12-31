@@ -26,6 +26,7 @@
 #endif
 
 #include <stdint.h>
+#include <variant>
 
 #include <boost/assign/list_of.hpp>
 
@@ -76,7 +77,7 @@ UniValue TxJoinSplitToJSON(const CTransaction& tx) {
 
         {
             UniValue nullifiers(UniValue::VARR);
-            BOOST_FOREACH(const uint256 nf, jsdescription.nullifiers) {
+            for (const uint256 nf : jsdescription.nullifiers) {
                 nullifiers.push_back(nf.GetHex());
             }
             joinsplit.pushKV("nullifiers", nullifiers);
@@ -84,7 +85,7 @@ UniValue TxJoinSplitToJSON(const CTransaction& tx) {
 
         {
             UniValue commitments(UniValue::VARR);
-            BOOST_FOREACH(const uint256 commitment, jsdescription.commitments) {
+            for (const uint256 commitment : jsdescription.commitments) {
                 commitments.push_back(commitment.GetHex());
             }
             joinsplit.pushKV("commitments", commitments);
@@ -95,7 +96,7 @@ UniValue TxJoinSplitToJSON(const CTransaction& tx) {
 
         {
             UniValue macs(UniValue::VARR);
-            BOOST_FOREACH(const uint256 mac, jsdescription.macs) {
+            for (const uint256 mac : jsdescription.macs) {
                 macs.push_back(mac.GetHex());
             }
             joinsplit.pushKV("macs", macs);
@@ -103,7 +104,7 @@ UniValue TxJoinSplitToJSON(const CTransaction& tx) {
 
         CDataStream ssProof(SER_NETWORK, PROTOCOL_VERSION);
         auto ps = SproutProofSerializer<CDataStream>(ssProof, useGroth);
-        boost::apply_visitor(ps, jsdescription.proof);
+        std::visit(ps, jsdescription.proof);
         joinsplit.pushKV("proof", HexStr(ssProof.begin(), ssProof.end()));
 
         {
@@ -153,6 +154,7 @@ void TxToJSON(const CTransaction& tx, const uint256 hashBlock, UniValue& entry)
 {
     const uint256 txid = tx.GetHash();
     entry.pushKV("txid", txid.GetHex());
+    entry.pushKV("size", (int)::GetSerializeSize(tx, SER_NETWORK, PROTOCOL_VERSION));
     entry.pushKV("overwintered", tx.fOverwintered);
     entry.pushKV("version", tx.nVersion);
     if (tx.fOverwintered) {
@@ -163,9 +165,11 @@ void TxToJSON(const CTransaction& tx, const uint256 hashBlock, UniValue& entry)
         entry.pushKV("expiryheight", (int64_t)tx.nExpiryHeight);
     }
 
+    entry.pushKV("hex", EncodeHexTx(tx));
+
     KeyIO keyIO(Params());
     UniValue vin(UniValue::VARR);
-    BOOST_FOREACH(const CTxIn& txin, tx.vin) {
+    for (const CTxIn& txin : tx.vin) {
         UniValue in(UniValue::VOBJ);
         if (tx.IsCoinBase())
             in.pushKV("coinbase", HexStr(txin.scriptSig.begin(), txin.scriptSig.end()));
@@ -267,27 +271,33 @@ void TxToJSON(const CTransaction& tx, const uint256 hashBlock, UniValue& entry)
 
 UniValue getrawtransaction(const UniValue& params, bool fHelp)
 {
-    if (fHelp || params.size() < 1 || params.size() > 2)
+    if (fHelp || params.size() < 1 || params.size() > 3)
         throw runtime_error(
-            "getrawtransaction \"txid\" ( verbose )\n"
-            "\nNOTE: By default this function only works sometimes. This is when the tx is in the mempool\n"
-            "or there is an unspent output in the utxo for this transaction. To make it always work,\n"
-            "you need to maintain a transaction index, using the -txindex command line option.\n"
+            "getrawtransaction \"txid\" ( verbose \"blockhash\" )\n"
+            "\nNOTE: If \"blockhash\" is not provided and the -txindex option is not enabled, then this call only\n"
+            "works for mempool transactions. If either \"blockhash\" is provided or the -txindex option is\n"
+            "enabled, it also works for blockchain transactions. If the block which contains the transaction\n"
+            "is known, its hash can be provided even for nodes without -txindex. Note that if a blockhash is\n"
+            "provided, only that block will be searched and if the transaction is in the mempool or other\n"
+            "blocks, or if this node does not have the given block available, the transaction will not be found.\n"
             "\nReturn the raw transaction data.\n"
             "\nIf verbose=0, returns a string that is serialized, hex-encoded data for 'txid'.\n"
             "If verbose is non-zero, returns an Object with information about 'txid'.\n"
 
             "\nArguments:\n"
             "1. \"txid\"      (string, required) The transaction id\n"
-            "2. verbose       (numeric, optional, default=0) If 0, return a string, other return a json object\n"
+            "2. verbose     (numeric, optional, default=0) If 0, return a string of hex-encoded data, otherwise return a JSON object\n"
+            "3. \"blockhash\" (string, optional) The block in which to look for the transaction\n"
 
             "\nResult (if verbose is not set or set to 0):\n"
             "\"data\"      (string) The serialized, hex-encoded data for 'txid'\n"
 
             "\nResult (if verbose > 0):\n"
             "{\n"
+            "  \"in_active_chain\": b,   (bool) Whether specified block is in the active chain or not (only present with explicit \"blockhash\" argument)\n"
             "  \"hex\" : \"data\",       (string) The serialized, hex-encoded data for 'txid'\n"
             "  \"txid\" : \"id\",        (string) The transaction id (same as provided)\n"
+            "  \"size\" : n,             (numeric) The transaction size\n"
             "  \"version\" : n,          (numeric) The version\n"
             "  \"locktime\" : ttt,       (numeric) The lock time\n"
             "  \"expiryheight\" : ttt,   (numeric, optional) The block height after which the transaction expires\n"
@@ -357,20 +367,48 @@ UniValue getrawtransaction(const UniValue& params, bool fHelp)
             + HelpExampleCli("getrawtransaction", "\"mytxid\"")
             + HelpExampleCli("getrawtransaction", "\"mytxid\" 1")
             + HelpExampleRpc("getrawtransaction", "\"mytxid\", 1")
+            + HelpExampleCli("getrawtransaction", "\"mytxid\" 0 \"myblockhash\"")
+            + HelpExampleCli("getrawtransaction", "\"mytxid\" 1 \"myblockhash\"")
         );
 
+    LOCK(cs_main);
+
+    bool in_active_chain = true;
     uint256 hash = ParseHashV(params[0], "parameter 1");
+    CBlockIndex* blockindex = nullptr;
 
     bool fVerbose = false;
     if (params.size() > 1)
         fVerbose = (params[1].get_int() != 0);
 
-    LOCK(cs_main);
+    if (params.size() > 2) {
+        uint256 blockhash = ParseHashV(params[2], "parameter 3");
+        if (!blockhash.IsNull()) {
+            BlockMap::iterator it = mapBlockIndex.find(blockhash);
+            if (it == mapBlockIndex.end()) {
+                throw JSONRPCError(RPC_INVALID_ADDRESS_OR_KEY, "Block hash not found");
+            }
+            blockindex = it->second;
+            in_active_chain = chainActive.Contains(blockindex);
+        }
+    }
 
     CTransaction tx;
-    uint256 hashBlock;
-    if (!GetTransaction(hash, tx, Params().GetConsensus(), hashBlock, true))
-        throw JSONRPCError(RPC_INVALID_ADDRESS_OR_KEY, "No information available about transaction");
+    uint256 hash_block;
+    if (!GetTransaction(hash, tx, Params().GetConsensus(), hash_block, true, blockindex)) {
+        std::string errmsg;
+        if (blockindex) {
+            if (!(blockindex->nStatus & BLOCK_HAVE_DATA)) {
+                throw JSONRPCError(RPC_MISC_ERROR, "Block not available");
+            }
+            errmsg = "No such transaction found in the provided block";
+        } else {
+            errmsg = fTxIndex
+              ? "No such mempool or blockchain transaction"
+              : "No such mempool transaction. Use -txindex to enable blockchain transaction queries";
+        }
+        throw JSONRPCError(RPC_INVALID_ADDRESS_OR_KEY, errmsg + ". Use gettransaction for wallet transactions.");
+    }
 
     string strHex = EncodeHexTx(tx);
 
@@ -378,8 +416,9 @@ UniValue getrawtransaction(const UniValue& params, bool fHelp)
         return strHex;
 
     UniValue result(UniValue::VOBJ);
+    if (blockindex) result.pushKV("in_active_chain", in_active_chain);
     result.pushKV("hex", strHex);
-    TxToJSON(tx, hashBlock, result);
+    TxToJSON(tx, hash_block, result);
     return result;
 }
 
@@ -472,7 +511,7 @@ UniValue gettxoutproof(const UniValue& params, bool fHelp)
         throw JSONRPCError(RPC_INTERNAL_ERROR, "Can't read block from disk");
 
     unsigned int ntxFound = 0;
-    BOOST_FOREACH(const CTransaction&tx, block.vtx)
+    for (const CTransaction&tx : block.vtx)
         if (setTxids.count(tx.GetHash()))
             ntxFound++;
     if (ntxFound != setTxids.size())
@@ -513,7 +552,7 @@ UniValue verifytxoutproof(const UniValue& params, bool fHelp)
     if (!mapBlockIndex.count(merkleBlock.header.GetHash()) || !chainActive.Contains(mapBlockIndex[merkleBlock.header.GetHash()]))
         throw JSONRPCError(RPC_INVALID_ADDRESS_OR_KEY, "Block not found in chain");
 
-    BOOST_FOREACH(const uint256& hash, vMatch)
+    for (const uint256& hash : vMatch)
         res.push_back(hash.GetHex());
     return res;
 }
@@ -653,6 +692,7 @@ UniValue decoderawtransaction(const UniValue& params, bool fHelp)
             "\nResult:\n"
             "{\n"
             "  \"txid\" : \"id\",        (string) The transaction id\n"
+            "  \"size\" : n,             (numeric) The transaction size\n"
             "  \"overwintered\" : bool   (boolean) The Overwintered flag\n"
             "  \"version\" : n,          (numeric) The version\n"
             "  \"versiongroupid\": \"hex\"   (string, optional) The version group id (Overwintered txs)\n"
@@ -890,7 +930,7 @@ UniValue signrawtransaction(const UniValue& params, bool fHelp)
         CCoinsViewMemPool viewMempool(&viewChain, mempool);
         view.SetBackend(viewMempool); // temporarily switch cache backend to db+mempool view
 
-        BOOST_FOREACH(const CTxIn& txin, mergedTx.vin) {
+        for (const CTxIn& txin : mergedTx.vin) {
             const uint256& prevHash = txin.prevout.hash;
             CCoins coins;
             view.AccessCoins(prevHash); // this is certainly allowed to fail
@@ -1036,7 +1076,7 @@ UniValue signrawtransaction(const UniValue& params, bool fHelp)
             ProduceSignature(MutableTransactionSignatureCreator(&keystore, &mergedTx, i, amount, nHashType), prevPubKey, sigdata, consensusBranchId);
 
         // ... and merge in other signatures:
-        BOOST_FOREACH(const CMutableTransaction& txv, txVariants) {
+        for (const CMutableTransaction& txv : txVariants) {
             sigdata = CombineSignatures(prevPubKey, TransactionSignatureChecker(&txConst, i, amount), sigdata, DataFromTransaction(txv, i), consensusBranchId);
         }
 
@@ -1091,10 +1131,12 @@ UniValue sendrawtransaction(const UniValue& params, bool fHelp)
         throw JSONRPCError(RPC_DESERIALIZATION_ERROR, "TX decode failed");
     uint256 hashTx = tx.GetHash();
 
+    auto chainparams = Params();
+
     // DoS mitigation: reject transactions expiring soon
     if (tx.nExpiryHeight > 0) {
         int nextBlockHeight = chainActive.Height() + 1;
-        if (Params().GetConsensus().NetworkUpgradeActive(nextBlockHeight, Consensus::UPGRADE_OVERWINTER)) {
+        if (chainparams.GetConsensus().NetworkUpgradeActive(nextBlockHeight, Consensus::UPGRADE_OVERWINTER)) {
             if (nextBlockHeight + TX_EXPIRING_SOON_THRESHOLD > tx.nExpiryHeight) {
                 throw JSONRPCError(RPC_TRANSACTION_REJECTED,
                     strprintf("tx-expiring-soon: expiryheight is %d but should be at least %d to avoid transaction expiring soon",
@@ -1116,7 +1158,7 @@ UniValue sendrawtransaction(const UniValue& params, bool fHelp)
         // push to local node and sync with wallets
         CValidationState state;
         bool fMissingInputs;
-        if (!AcceptToMemoryPool(mempool, state, tx, false, &fMissingInputs, !fOverrideFees)) {
+        if (!AcceptToMemoryPool(chainparams, mempool, state, tx, false, &fMissingInputs, !fOverrideFees)) {
             if (state.IsInvalid()) {
                 throw JSONRPCError(RPC_TRANSACTION_REJECTED, strprintf("%i: %s", state.GetRejectCode(), state.GetRejectReason()));
             } else {

@@ -3,7 +3,6 @@
 #include <map>
 #include <thread>
 #include <unistd.h>
-#include <boost/filesystem.hpp>
 
 #include "coins.h"
 #include "util.h"
@@ -23,7 +22,6 @@
 #include "random.h"
 #include "rpc/server.h"
 #include "script/sign.h"
-#include "sodium.h"
 #include "streams.h"
 #include "txdb.h"
 #include "utiltest.h"
@@ -69,7 +67,7 @@ void post_wallet_load(){
     // Generate coins in the background
     if (pwalletMain || !GetArg("-mineraddress", "").empty())
         GenerateBitcoins(GetBoolArg("-gen", false), GetArg("-genproclimit", 1), Params());
-#endif    
+#endif
 }
 
 
@@ -157,17 +155,15 @@ double benchmark_solve_equihash()
     CDataStream ss(SER_NETWORK, PROTOCOL_VERSION);
     ss << I;
 
-    auto params = Params(CBaseChainParams::MAIN).GetConsensus();
+    const Consensus::Params& params = Params(CBaseChainParams::MAIN).GetConsensus();
     unsigned int n = params.nEquihashN;
     unsigned int k = params.nEquihashK;
-    crypto_generichash_blake2b_state eh_state;
+    eh_HashState eh_state;
     EhInitialiseState(n, k, eh_state);
-    crypto_generichash_blake2b_update(&eh_state, (unsigned char*)&ss[0], ss.size());
+    eh_state.Update((unsigned char*)&ss[0], ss.size());
 
     uint256 nonce = GetRandHash();
-    crypto_generichash_blake2b_update(&eh_state,
-                                    nonce.begin(),
-                                    nonce.size());
+    eh_state.Update(nonce.begin(), nonce.size());
 
     struct timeval tv_start;
     timer_start(tv_start);
@@ -266,9 +262,9 @@ double benchmark_large_tx(size_t nInputs)
 }
 
 // The two benchmarks, try_decrypt_sprout_notes and try_decrypt_sapling_notes,
-// are checking worst-case scenarios. In both we add n keys to a wallet, 
+// are checking worst-case scenarios. In both we add n keys to a wallet,
 // create a transaction using a key not in our original list of n, and then
-// check that the transaction is not associated with any of the keys in our 
+// check that the transaction is not associated with any of the keys in our
 // wallet. We call assert(...) to ensure that this is true.
 double benchmark_try_decrypt_sprout_notes(size_t nKeys)
 {
@@ -292,7 +288,7 @@ double benchmark_try_decrypt_sprout_notes(size_t nKeys)
 double benchmark_try_decrypt_sapling_notes(size_t nKeys)
 {
     // Set params
-    auto consensusParams = Params().GetConsensus();
+    const Consensus::Params& consensusParams = Params().GetConsensus();
 
     auto masterKey = GetTestMasterSaplingSpendingKey();
 
@@ -331,7 +327,7 @@ CWalletTx CreateSproutTxWithNoteData(const libzcash::SproutSpendingKey& sk) {
 
 double benchmark_increment_sprout_note_witnesses(size_t nTxs)
 {
-    auto consensusParams = Params().GetConsensus();
+    const Consensus::Params& consensusParams = Params().GetConsensus();
 
     CWallet wallet;
     SproutMerkleTree sproutTree;
@@ -378,7 +374,7 @@ CWalletTx CreateSaplingTxWithNoteData(const Consensus::Params& consensusParams,
     auto wtx = GetValidSaplingReceive(consensusParams, keyStore, sk, 10);
     auto testNote = GetTestSaplingNote(sk.DefaultAddress(), 10);
     auto fvk = sk.expsk.full_viewing_key();
-    auto nullifier = testNote.note.nullifier(fvk, testNote.tree.witness().position()).get();
+    auto nullifier = testNote.note.nullifier(fvk, testNote.tree.witness().position()).value();
 
     mapSaplingNoteData_t noteDataMap;
     SaplingOutPoint outPoint {wtx.GetHash(), 0};
@@ -393,7 +389,7 @@ CWalletTx CreateSaplingTxWithNoteData(const Consensus::Params& consensusParams,
 
 double benchmark_increment_sapling_note_witnesses(size_t nTxs)
 {
-    auto consensusParams = Params().GetConsensus();
+    const Consensus::Params& consensusParams = Params().GetConsensus();
 
     CWallet wallet;
     SproutMerkleTree sproutTree;
@@ -436,7 +432,7 @@ double benchmark_increment_sapling_note_witnesses(size_t nTxs)
 
 // Fake the input of a given block
 // This class is based on the class CCoinsViewDB, but with limited functionality.
-// The construtor and the functions `GetCoins` and `HaveCoins` come directly from
+// The constructor and the functions `GetCoins` and `HaveCoins` come directly from
 // CCoinsViewDB, but the rest are either mocks and/or don't really do anything.
 
 // The following constant is a duplicate of the one found in txdb.cpp
@@ -517,7 +513,7 @@ double benchmark_connectblock_slow()
     // Test for issue 2017-05-01.a
     SelectParams(CBaseChainParams::MAIN);
     CBlock block;
-    FILE* fp = fopen((GetDataDir() / "benchmark/block-107134.dat").string().c_str(), "rb");
+    FILE* fp = fsbridge::fopen(GetDataDir() / "benchmark/block-107134.dat", "rb");
     if (!fp) throw new std::runtime_error("Failed to open block data file");
     CAutoFile blkFile(fp, SER_DISK, CLIENT_VERSION);
     blkFile >> block;
@@ -599,7 +595,7 @@ double benchmark_create_sapling_spend()
     SaplingNote note(address, GetRand(MAX_MONEY), libzcash::Zip212Enabled::BeforeZip212);
     SaplingMerkleTree tree;
     auto maybe_cmu = note.cmu();
-    tree.append(maybe_cmu.get());
+    tree.append(maybe_cmu.value());
     auto anchor = tree.root();
     auto witness = tree.witness();
     auto maybe_nf = note.nullifier(expsk.full_viewing_key(), witness.position());
@@ -657,7 +653,7 @@ double benchmark_create_sapling_output()
         throw JSONRPCError(RPC_INTERNAL_ERROR, "SaplingNotePlaintext::encrypt() failed");
     }
 
-    auto enc = res.get();
+    auto enc = res.value();
     auto encryptor = enc.second;
 
     CDataStream ss(SER_NETWORK, PROTOCOL_VERSION);

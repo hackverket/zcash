@@ -15,7 +15,6 @@
 #include <assert.h>
 #include <stdint.h>
 
-#include <boost/foreach.hpp>
 #include <boost/unordered_map.hpp>
 #include "zcash/History.hpp"
 #include "zcash/IncrementalMerkleTree.hpp"
@@ -120,7 +119,7 @@ public:
     }
 
     void ClearUnspendable() {
-        BOOST_FOREACH(CTxOut &txout, vout) {
+        for (CTxOut &txout : vout) {
             if (txout.scriptPubKey.IsUnspendable())
                 txout.SetNull();
         }
@@ -228,7 +227,7 @@ public:
     //! check whether the entire CCoins is spent
     //! note that only !IsPruned() CCoins can be serialized
     bool IsPruned() const {
-        BOOST_FOREACH(const CTxOut &out, vout)
+        for (const CTxOut &out : vout)
             if (!out.IsNull())
                 return false;
         return true;
@@ -236,7 +235,7 @@ public:
 
     size_t DynamicMemoryUsage() const {
         size_t ret = memusage::DynamicUsage(vout);
-        BOOST_FOREACH(const CTxOut &out, vout) {
+        for (const CTxOut &out : vout) {
             ret += RecursiveDynamicUsage(out.scriptPubKey);
         }
         return ret;
@@ -447,6 +446,14 @@ public:
     friend class CCoinsViewCache;
 };
 
+/** The set of shielded requirements that might be unsatisfied. */
+enum class UnsatisfiedShieldedReq {
+    SproutDuplicateNullifier,
+    SproutUnknownAnchor,
+    SaplingDuplicateNullifier,
+    SaplingUnknownAnchor,
+};
+
 /** CCoinsView that adds a memory cache for transactions to another CCoinsView */
 class CCoinsViewCache : public CCoinsViewBacked
 {
@@ -566,7 +573,7 @@ public:
     bool HaveInputs(const CTransaction& tx) const;
 
     //! Check whether all joinsplit and sapling spend requirements (anchors/nullifiers) are satisfied
-    bool HaveShieldedRequirements(const CTransaction& tx) const;
+    std::optional<UnsatisfiedShieldedReq> HaveShieldedRequirements(const CTransaction& tx) const;
 
     //! Return priority of tx at height nHeight
     double GetPriority(const CTransaction &tx, int nHeight) const;

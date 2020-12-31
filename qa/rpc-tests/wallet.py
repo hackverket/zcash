@@ -1,22 +1,23 @@
 #!/usr/bin/env python3
-# Copyright (c) 2014 The Bitcoin Core developers
+# Copyright (c) 2014-2016 The Bitcoin Core developers
 # Distributed under the MIT software license, see the accompanying
 # file COPYING or https://www.opensource.org/licenses/mit-license.php .
 
 from test_framework.test_framework import BitcoinTestFramework
 from test_framework.authproxy import JSONRPCException
 from test_framework.util import assert_equal, assert_greater_than, \
-    initialize_chain_clean, start_nodes, start_node, connect_nodes_bi, \
+    start_nodes, start_node, connect_nodes_bi, \
     stop_nodes, sync_blocks, sync_mempools, wait_and_assert_operationid_status, \
-    wait_bitcoinds
+    wait_bitcoinds, DEFAULT_FEE
 
 from decimal import Decimal
 
 class WalletTest (BitcoinTestFramework):
 
-    def setup_chain(self):
-        print("Initializing test directory "+self.options.tmpdir)
-        initialize_chain_clean(self.options.tmpdir, 4)
+    def __init__(self):
+        super().__init__()
+        self.setup_clean_chain = True
+        self.num_nodes = 4
 
     def setup_network(self, split=False):
         self.nodes = start_nodes(3, self.options.tmpdir)
@@ -50,7 +51,7 @@ class WalletTest (BitcoinTestFramework):
         assert_equal(self.nodes[1].getbalance("*"), 10)
         assert_equal(self.nodes[2].getbalance("*"), 0)
 
-        # Send 21 BTC from 0 to 2 using sendtoaddress call.
+        # Send 21 ZEC from 0 to 2 using sendtoaddress call.
         # Second transaction will be child of first, and will require a fee
         self.nodes[0].sendtoaddress(self.nodes[2].getnewaddress(), 11)
         self.nodes[0].sendtoaddress(self.nodes[2].getnewaddress(), 10)
@@ -70,8 +71,8 @@ class WalletTest (BitcoinTestFramework):
         self.nodes[1].generate(100)
         self.sync_all()
 
-        # node0 should end up with 50 btc in block rewards plus fees, but
-        # minus the 21 plus fees sent to node2
+        # node0 should end up with 50 ZEC in block rewards plus fees, but
+        # minus the 21 ZEC plus fees sent to node2
         assert_equal(self.nodes[0].getbalance(), 50-21)
         assert_equal(self.nodes[2].getbalance(), 21)
         assert_equal(self.nodes[0].getbalance("*"), 50-21)
@@ -96,8 +97,8 @@ class WalletTest (BitcoinTestFramework):
         assert_equal(sum(int(uxto["generated"] is True) for uxto in node2utxos), 0)
 
         # Catch an attempt to send a transaction with an absurdly high fee.
-        # Send 1.0 from an utxo of value 10.0 but don't specify a change output, so then
-        # the change of 9.0 becomes the fee, which is greater than estimated fee of 0.0021.
+        # Send 1.0 ZEC from an utxo of value 10.0 ZEC but don't specify a change output, so then
+        # the change of 9.0 ZEC becomes the fee, which is greater than estimated fee of 0.0021 ZEC.
         inputs = []
         outputs = {}
         for utxo in node2utxos:
@@ -140,9 +141,9 @@ class WalletTest (BitcoinTestFramework):
         assert_equal(self.nodes[0].getbalance("*"), 0)
         assert_equal(self.nodes[2].getbalance("*"), 50)
 
-        # Send 10 BTC normal
+        # Send 10 ZEC normally
         address = self.nodes[0].getnewaddress("")
-        self.nodes[2].settxfee(Decimal('0.001'))
+        self.nodes[2].settxfee(Decimal('0.001'))  # not the default
         self.nodes[2].sendtoaddress(address, 10, "", "", False)
         self.sync_all()
         self.nodes[2].generate(1)
@@ -152,7 +153,7 @@ class WalletTest (BitcoinTestFramework):
         assert_equal(self.nodes[2].getbalance("*"), Decimal('39.99900000'))
         assert_equal(self.nodes[0].getbalance("*"), Decimal('10.00000000'))
 
-        # Send 10 BTC with subtract fee from amount
+        # Send 10 ZEC with subtract fee from amount
         self.nodes[2].sendtoaddress(address, 10, "", "", True)
         self.sync_all()
         self.nodes[2].generate(1)
@@ -162,7 +163,7 @@ class WalletTest (BitcoinTestFramework):
         assert_equal(self.nodes[2].getbalance("*"), Decimal('29.99900000'))
         assert_equal(self.nodes[0].getbalance("*"), Decimal('19.99900000'))
 
-        # Sendmany 10 BTC
+        # Sendmany 10 ZEC
         self.nodes[2].sendmany("", {address: 10}, 0, "", [])
         self.sync_all()
         self.nodes[2].generate(1)
@@ -172,7 +173,7 @@ class WalletTest (BitcoinTestFramework):
         assert_equal(self.nodes[2].getbalance("*"), Decimal('19.99800000'))
         assert_equal(self.nodes[0].getbalance("*"), Decimal('29.99900000'))
 
-        # Sendmany 10 BTC with subtract fee from amount
+        # Sendmany 10 ZEC with subtract fee from amount
         self.nodes[2].sendmany("", {address: 10}, 0, "", [address])
         self.sync_all()
         self.nodes[2].generate(1)
@@ -297,7 +298,7 @@ class WalletTest (BitcoinTestFramework):
         assert("joinSplitSig" not in mytxdetails)
 
         # z_sendmany is expected to fail if tx size breaks limit
-        myzaddr = self.nodes[0].z_getnewaddress('sprout')
+        myzaddr = self.nodes[0].z_getnewaddress()
 
         recipients = []
         num_t_recipients = 1000
@@ -308,7 +309,7 @@ class WalletTest (BitcoinTestFramework):
             newtaddr = self.nodes[2].getnewaddress()
             recipients.append({"address":newtaddr, "amount":amount_per_recipient})
         for i in range(0,num_z_recipients):
-            newzaddr = self.nodes[2].z_getnewaddress('sprout')
+            newzaddr = self.nodes[2].z_getnewaddress()
             recipients.append({"address":newzaddr, "amount":amount_per_recipient})
 
         # Issue #2759 Workaround START
@@ -327,7 +328,7 @@ class WalletTest (BitcoinTestFramework):
         assert("size of raw transaction would be larger than limit" in errorString)
 
         # add zaddr to node 2
-        myzaddr = self.nodes[2].z_getnewaddress('sprout')
+        myzaddr = self.nodes[2].z_getnewaddress()
 
         # send node 2 taddr to zaddr
         recipients = []
@@ -336,18 +337,24 @@ class WalletTest (BitcoinTestFramework):
         mytxid = wait_and_assert_operationid_status(self.nodes[2], self.nodes[2].z_sendmany(mytaddr, recipients))
 
         self.sync_all()
-        self.nodes[2].generate(1)
-        self.sync_all()
 
         # check balances
         zsendmanynotevalue = Decimal('7.0')
-        zsendmanyfee = Decimal('0.0001')
+        zsendmanyfee = DEFAULT_FEE
         node2utxobalance = Decimal('23.998') - zsendmanynotevalue - zsendmanyfee
+
+        # check shielded balance status with getwalletinfo
+        wallet_info = self.nodes[2].getwalletinfo()
+        assert_equal(Decimal(wallet_info["shielded_unconfirmed_balance"]), zsendmanynotevalue)
+        assert_equal(Decimal(wallet_info["shielded_balance"]), Decimal('0.0'))
+
+        self.nodes[2].generate(1)
+        self.sync_all()
 
         assert_equal(self.nodes[2].getbalance(), node2utxobalance)
         assert_equal(self.nodes[2].getbalance("*"), node2utxobalance)
 
-        # check zaddr balance
+        # check zaddr balance with z_getbalance
         assert_equal(self.nodes[2].z_getbalance(myzaddr), zsendmanynotevalue)
 
         # check via z_gettotalbalance
@@ -356,28 +363,24 @@ class WalletTest (BitcoinTestFramework):
         assert_equal(Decimal(resp["private"]), zsendmanynotevalue)
         assert_equal(Decimal(resp["total"]), node2utxobalance + zsendmanynotevalue)
 
-        # there should be at least one joinsplit
-        mytxdetails = self.nodes[2].gettransaction(mytxid)
-        myvjoinsplits = mytxdetails["vjoinsplit"]
-        assert_greater_than(len(myvjoinsplits), 0)
+        # check confirmed shielded balance with getwalletinfo
+        wallet_info = self.nodes[2].getwalletinfo()
+        assert_equal(Decimal(wallet_info["shielded_unconfirmed_balance"]), Decimal('0.0'))
+        assert_equal(Decimal(wallet_info["shielded_balance"]), zsendmanynotevalue)
 
-        # the first (probably only) joinsplit should take in all the public value
+        # there should be at least one Sapling output
         mytxdetails = self.nodes[2].getrawtransaction(mytxid, 1)
-        myjoinsplit = mytxdetails["vjoinsplit"][0]
-        assert_equal(myjoinsplit["vpub_old"], zsendmanynotevalue)
-        assert_equal(myjoinsplit["vpub_new"], 0)
-        assert("onetimePubKey" in myjoinsplit.keys())
-        assert("randomSeed" in myjoinsplit.keys())
-        assert("ciphertexts" in myjoinsplit.keys())
-
-        assert(len(mytxdetails["joinSplitPubKey"]) == 64)
-        int(mytxdetails["joinSplitPubKey"], 16) # throws if not a hex string
-        assert(len(mytxdetails["joinSplitSig"]) == 128)
-        int(mytxdetails["joinSplitSig"], 16) # hex string
+        assert_greater_than(len(mytxdetails["vShieldedOutput"]), 0)
+        # the Sapling output should take in all the public value
+        assert_equal(mytxdetails["valueBalance"], -zsendmanynotevalue)
 
         # send from private note to node 0 and node 2
-        node0balance = self.nodes[0].getbalance() # 25.99794745
-        node2balance = self.nodes[2].getbalance() # 16.99790000
+        node0balance = self.nodes[0].getbalance()
+        # The following assertion fails nondeterministically
+        # assert_equal(node0balance, Decimal('25.99798873'))
+        node2balance = self.nodes[2].getbalance()
+        # The following assertion might fail nondeterministically
+        # assert_equal(node2balance, Decimal('16.99799000'))
 
         recipients = []
         recipients.append({"address":self.nodes[0].getnewaddress(), "amount":1})
@@ -430,7 +433,7 @@ class WalletTest (BitcoinTestFramework):
 
         assert_equal("not an integer" in errorString, True)
 
-        myzaddr     = self.nodes[0].z_getnewaddress('sprout')
+        myzaddr     = self.nodes[0].z_getnewaddress()
         recipients  = [ {"address": myzaddr, "amount": Decimal('0.0') } ]
         errorString = ''
 

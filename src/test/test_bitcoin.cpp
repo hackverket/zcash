@@ -14,6 +14,7 @@
 #ifdef ENABLE_MINING
 #include "crypto/equihash.h"
 #endif
+#include "fs.h"
 #include "key.h"
 #include "main.h"
 #include "miner.h"
@@ -25,11 +26,12 @@
 #include "rpc/server.h"
 #include "rpc/register.h"
 
-#include <boost/filesystem.hpp>
 #include <boost/test/unit_test.hpp>
 #include <boost/thread.hpp>
 
 #include "librustzcash.h"
+
+const std::function<std::string(const char*)> G_TRANSLATION_FUN = nullptr;
 
 CClientUIInterface uiInterface; // Declared but not defined in ui_interface.h
 
@@ -41,12 +43,12 @@ extern void noui_connect();
 
 JoinSplitTestingSetup::JoinSplitTestingSetup(const std::string& chainName) : BasicTestingSetup(chainName)
 {
-    boost::filesystem::path sapling_spend = ZC_GetParamsDir() / "sapling-spend.params";
-    boost::filesystem::path sapling_output = ZC_GetParamsDir() / "sapling-output.params";
-    boost::filesystem::path sprout_groth16 = ZC_GetParamsDir() / "sprout-groth16.params";
+    fs::path sapling_spend = ZC_GetParamsDir() / "sapling-spend.params";
+    fs::path sapling_output = ZC_GetParamsDir() / "sapling-output.params";
+    fs::path sprout_groth16 = ZC_GetParamsDir() / "sprout-groth16.params";
 
     static_assert(
-        sizeof(boost::filesystem::path::value_type) == sizeof(codeunit),
+        sizeof(fs::path::value_type) == sizeof(codeunit),
         "librustzcash not configured correctly");
     auto sapling_spend_str = sapling_spend.native();
     auto sapling_output_str = sapling_output.native();
@@ -91,11 +93,11 @@ TestingSetup::TestingSetup(const std::string& chainName) : JoinSplitTestingSetup
         RegisterAllCoreRPCCommands(tableRPC);
 
         // Save current path, in case a test changes it
-        orig_current_path = boost::filesystem::current_path();
+        orig_current_path = fs::current_path();
 
         ClearDatadirCache();
-        pathTemp = GetTempPath() / strprintf("test_bitcoin_%lu_%i", (unsigned long)GetTime(), (int)(GetRand(100000)));
-        boost::filesystem::create_directories(pathTemp);
+        pathTemp = fs::temp_directory_path() / strprintf("test_bitcoin_%lu_%i", (unsigned long)GetTime(), (int)(GetRand(100000)));
+        fs::create_directories(pathTemp);
         mapArgs["-datadir"] = pathTemp.string();
         pblocktree = new CBlockTreeDB(1 << 20, true);
         pcoinsdbview = new CCoinsViewDB(1 << 23, true);
@@ -118,9 +120,9 @@ TestingSetup::~TestingSetup()
         delete pblocktree;
 
         // Restore the previous current path so temporary directory can be deleted
-        boost::filesystem::current_path(orig_current_path);
+        fs::current_path(orig_current_path);
 
-        boost::filesystem::remove_all(pathTemp);
+        fs::remove_all(pathTemp);
 }
 
 #ifdef ENABLE_MINING
@@ -156,14 +158,14 @@ TestChain100Setup::CreateAndProcessBlock(const std::vector<CMutableTransaction>&
 
     // Replace mempool-selected txns with just coinbase plus passed-in txns:
     block.vtx.resize(1);
-    BOOST_FOREACH(const CMutableTransaction& tx, txns)
+    for (const CMutableTransaction& tx : txns)
         block.vtx.push_back(tx);
     // IncrementExtraNonce creates a valid coinbase and merkleRoot
     unsigned int extraNonce = 0;
     IncrementExtraNonce(&block, chainActive.Tip(), extraNonce);
 
     // Hash state
-    crypto_generichash_blake2b_state eh_state;
+    eh_HashState eh_state;
     EhInitialiseState(n, k, eh_state);
 
     // I = the block header minus nonce and solution.
@@ -172,18 +174,15 @@ TestChain100Setup::CreateAndProcessBlock(const std::vector<CMutableTransaction>&
     ss << I;
 
     // H(I||...
-    crypto_generichash_blake2b_update(&eh_state, (unsigned char*)&ss[0], ss.size());
+    eh_state.Update((unsigned char*)&ss[0], ss.size());
 
     bool found = false;
     do {
         block.nNonce = ArithToUint256(UintToArith256(block.nNonce) + 1);
 
         // H(I||V||...
-        crypto_generichash_blake2b_state curr_state;
-        curr_state = eh_state;
-        crypto_generichash_blake2b_update(&curr_state,
-                                          block.nNonce.begin(),
-                                          block.nNonce.size());
+        eh_HashState curr_state(eh_state);
+        curr_state.Update(block.nNonce.begin(), block.nNonce.size());
 
         // (x_1, x_2, ...) = A(I, V, n, k)
         std::function<bool(std::vector<unsigned char>)> validBlock =

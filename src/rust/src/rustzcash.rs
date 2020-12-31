@@ -61,6 +61,7 @@ use zcash_proofs::{
 
 use zcash_history::{Entry as MMREntry, NodeData as MMRNodeData, Tree as MMRTree};
 
+mod blake2b;
 mod ed25519;
 mod tracing_ffi;
 
@@ -95,65 +96,54 @@ fn fixed_scalar_mult(from: &[u8; 32], p_g: &jubjub::SubgroupPoint) -> jubjub::Su
 
 /// Loads the zk-SNARK parameters into memory and saves paths as necessary.
 /// Only called once.
-#[cfg(not(target_os = "windows"))]
 #[no_mangle]
 pub extern "C" fn librustzcash_init_zksnark_params(
-    spend_path: *const u8,
+    #[cfg(not(target_os = "windows"))] spend_path: *const u8,
+    #[cfg(target_os = "windows")] spend_path: *const u16,
     spend_path_len: usize,
-    output_path: *const u8,
+    #[cfg(not(target_os = "windows"))] output_path: *const u8,
+    #[cfg(target_os = "windows")] output_path: *const u16,
     output_path_len: usize,
-    sprout_path: *const u8,
+    #[cfg(not(target_os = "windows"))] sprout_path: *const u8,
+    #[cfg(target_os = "windows")] sprout_path: *const u16,
     sprout_path_len: usize,
 ) {
-    let spend_path = Path::new(OsStr::from_bytes(unsafe {
-        slice::from_raw_parts(spend_path, spend_path_len)
-    }));
-    let output_path = Path::new(OsStr::from_bytes(unsafe {
-        slice::from_raw_parts(output_path, output_path_len)
-    }));
-    let sprout_path = if sprout_path.is_null() {
-        None
-    } else {
-        Some(Path::new(OsStr::from_bytes(unsafe {
-            slice::from_raw_parts(sprout_path, sprout_path_len)
-        })))
+    #[cfg(not(target_os = "windows"))]
+    let (spend_path, output_path, sprout_path) = {
+        (
+            OsStr::from_bytes(unsafe { slice::from_raw_parts(spend_path, spend_path_len) }),
+            OsStr::from_bytes(unsafe { slice::from_raw_parts(output_path, output_path_len) }),
+            if sprout_path.is_null() {
+                None
+            } else {
+                Some(OsStr::from_bytes(unsafe {
+                    slice::from_raw_parts(sprout_path, sprout_path_len)
+                }))
+            },
+        )
     };
 
-    init_zksnark_params(spend_path, output_path, sprout_path)
-}
-
-/// Loads the zk-SNARK parameters into memory and saves paths as necessary.
-/// Only called once.
-#[cfg(target_os = "windows")]
-#[no_mangle]
-pub extern "C" fn librustzcash_init_zksnark_params(
-    spend_path: *const u16,
-    spend_path_len: usize,
-    output_path: *const u16,
-    output_path_len: usize,
-    sprout_path: *const u16,
-    sprout_path_len: usize,
-) {
-    let spend_path =
-        OsString::from_wide(unsafe { slice::from_raw_parts(spend_path, spend_path_len) });
-    let output_path =
-        OsString::from_wide(unsafe { slice::from_raw_parts(output_path, output_path_len) });
-    let sprout_path = if sprout_path.is_null() {
-        None
-    } else {
-        Some(OsString::from_wide(unsafe {
-            slice::from_raw_parts(sprout_path, sprout_path_len)
-        }))
+    #[cfg(target_os = "windows")]
+    let (spend_path, output_path, sprout_path) = {
+        (
+            OsString::from_wide(unsafe { slice::from_raw_parts(spend_path, spend_path_len) }),
+            OsString::from_wide(unsafe { slice::from_raw_parts(output_path, output_path_len) }),
+            if sprout_path.is_null() {
+                None
+            } else {
+                Some(OsString::from_wide(unsafe {
+                    slice::from_raw_parts(sprout_path, sprout_path_len)
+                }))
+            },
+        )
     };
 
-    init_zksnark_params(
+    let (spend_path, output_path, sprout_path) = (
         Path::new(&spend_path),
         Path::new(&output_path),
         sprout_path.as_ref().map(|p| Path::new(p)),
-    )
-}
+    );
 
-fn init_zksnark_params(spend_path: &Path, output_path: &Path, sprout_path: Option<&Path>) {
     // Load params
     let (spend_params, spend_vk, output_params, output_vk, sprout_vk) =
         load_parameters(spend_path, output_path, sprout_path);
@@ -1259,44 +1249,4 @@ pub extern "system" fn librustzcash_mmr_hash_node(
 pub extern "C" fn librustzcash_getrandom(buf: *mut u8, buf_len: usize) {
     let buf = unsafe { slice::from_raw_parts_mut(buf, buf_len) };
     OsRng.fill_bytes(buf);
-}
-
-// The `librustzcash_zebra_crypto_sign_verify_detached` API attempts to
-// mimic the `crypto_sign_verify_detached` API in libsodium, but uses
-// the ed25519-zebra crate internally instead.
-const LIBSODIUM_OK: isize = 0;
-const LIBSODIUM_ERROR: isize = -1;
-
-#[no_mangle]
-pub extern "system" fn librustzcash_zebra_crypto_sign_verify_detached(
-    sig: *const [u8; 64],
-    m: *const u8,
-    mlen: u64,
-    pk: *const [u8; 32],
-) -> isize {
-    use ed25519_zebra::{Signature, VerificationKey};
-    use std::convert::TryFrom;
-
-    let sig = Signature::from(*unsafe {
-        match sig.as_ref() {
-            Some(sig) => sig,
-            None => return LIBSODIUM_ERROR,
-        }
-    });
-
-    let pk = match VerificationKey::try_from(*match unsafe { pk.as_ref() } {
-        Some(pk) => pk,
-        None => return LIBSODIUM_ERROR,
-    }) {
-        Ok(pk) => pk,
-        Err(_) => return LIBSODIUM_ERROR,
-    };
-
-    let m = unsafe { slice::from_raw_parts(m, mlen as usize) };
-
-    if pk.verify(&sig, m).is_err() {
-        LIBSODIUM_ERROR
-    } else {
-        LIBSODIUM_OK
-    }
 }

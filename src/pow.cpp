@@ -23,11 +23,15 @@ unsigned int GetNextWorkRequired(const CBlockIndex* pindexLast, const CBlockHead
     if (pindexLast == NULL)
         return nProofOfWorkLimit;
 
+    // Regtest
+    if (params.fPowNoRetargeting)
+        return pindexLast->nBits;
+
     {
         // Comparing to pindexLast->nHeight with >= because this function
         // returns the work required for the block after pindexLast.
-        if (params.nPowAllowMinDifficultyBlocksAfterHeight != boost::none &&
-            pindexLast->nHeight >= params.nPowAllowMinDifficultyBlocksAfterHeight.get())
+        if (params.nPowAllowMinDifficultyBlocksAfterHeight != std::nullopt &&
+            pindexLast->nHeight >= params.nPowAllowMinDifficultyBlocksAfterHeight.value())
         {
             // Special difficulty rule for testnet:
             // If the new block's timestamp is more than 6 * block interval minutes
@@ -51,6 +55,12 @@ unsigned int GetNextWorkRequired(const CBlockIndex* pindexLast, const CBlockHead
     if (pindexFirst == NULL)
         return nProofOfWorkLimit;
 
+    // The protocol specification leaves MeanTarget(height) as a rational, and takes the floor
+    // only after dividing by AveragingWindowTimespan in the computation of Threshold(height):
+    // <https://zips.z.cash/protocol/protocol.pdf#diffadjustment>
+    //
+    // Here we take the floor of MeanTarget(height) immediately, but that is equivalent to doing
+    // so only after a further division, as proven in <https://math.stackexchange.com/a/147832/185422>.
     arith_uint256 bnAvg {bnTot / params.nPowAveragingWindow};
 
     return CalculateNextWorkRequired(bnAvg,
@@ -138,7 +148,7 @@ arith_uint256 GetBlockProof(const CBlockIndex& block)
     if (fNegative || fOverflow || bnTarget == 0)
         return 0;
     // We need to compute 2**256 / (bnTarget+1), but we can't represent 2**256
-    // as it's too large for a arith_uint256. However, as 2**256 is at least as large
+    // as it's too large for an arith_uint256. However, as 2**256 is at least as large
     // as bnTarget+1, it is equal to ((2**256 - bnTarget - 1) / (bnTarget+1)) + 1,
     // or ~bnTarget / (bnTarget+1) + 1.
     return (~bnTarget / (bnTarget + 1)) + 1;

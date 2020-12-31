@@ -5,12 +5,12 @@
 
 #include "chainparamsbase.h"
 #include "clientversion.h"
+#include "fs.h"
 #include "rpc/client.h"
 #include "rpc/protocol.h"
 #include "util.h"
 #include "utilstrencodings.h"
 
-#include <boost/filesystem/operations.hpp>
 #include <stdio.h>
 
 #include <event2/buffer.h>
@@ -18,6 +18,8 @@
 #include "support/events.h"
 
 #include <univalue.h>
+
+const std::function<std::string(const char*)> G_TRANSLATION_FUN = nullptr;
 
 static const char DEFAULT_RPCCONNECT[] = "127.0.0.1";
 static const int DEFAULT_HTTP_CLIENT_TIMEOUT=900;
@@ -95,7 +97,7 @@ static int AppInitRPC(int argc, char* argv[])
         }
         return EXIT_SUCCESS;
     }
-    if (!boost::filesystem::is_directory(GetDataDir(false))) {
+    if (!fs::is_directory(GetDataDir(false))) {
         fprintf(stderr, "Error: Specified data directory \"%s\" does not exist.\n", mapArgs["-datadir"].c_str());
         return EXIT_FAILURE;
     }
@@ -328,9 +330,6 @@ int CommandLineRPC(int argc, char *argv[])
                     throw;
             }
         } while (fWait);
-    }
-    catch (const boost::thread_interrupted&) {
-        throw;
     }
     catch (const std::exception& e) {
         strPrint = std::string("error: ") + e.what();

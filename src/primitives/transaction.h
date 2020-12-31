@@ -15,8 +15,8 @@
 #include "consensus/consensus.h"
 
 #include <array>
+#include <variant>
 
-#include <boost/variant.hpp>
 
 #include "zcash/NoteEncryption.hpp"
 #include "zcash/Zcash.h"
@@ -140,7 +140,7 @@ public:
 };
 
 template <typename Stream>
-class SproutProofSerializer : public boost::static_visitor<>
+class SproutProofSerializer
 {
     Stream& s;
     bool useGroth;
@@ -169,7 +169,7 @@ template<typename Stream, typename T>
 inline void SerReadWriteSproutProof(Stream& s, const T& proof, bool useGroth, CSerActionSerialize ser_action)
 {
     auto ps = SproutProofSerializer<Stream>(s, useGroth);
-    boost::apply_visitor(ps, proof);
+    std::visit(ps, proof);
 }
 
 template<typename Stream, typename T>
@@ -359,7 +359,7 @@ class SaplingOutPoint : public BaseOutPoint
 {
 public:
     SaplingOutPoint() : BaseOutPoint() {};
-    SaplingOutPoint(uint256 hashIn, uint32_t nIn) : BaseOutPoint(hashIn, nIn) {}; 
+    SaplingOutPoint(uint256 hashIn, uint32_t nIn) : BaseOutPoint(hashIn, nIn) {};
     std::string ToString() const;
 };
 
@@ -372,6 +372,8 @@ class CTxIn
 public:
     COutPoint prevout;
     CScript scriptSig;
+    // The only use of nSequence (via IsFinal) is in TransactionSignatureChecker::CheckLockTime
+    // It disables the nLockTime feature when set to maxint.
     uint32_t nSequence;
 
     CTxIn()

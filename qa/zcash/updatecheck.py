@@ -57,6 +57,11 @@ def get_dependency_list():
             GithubTagReleaseLister("google", "googletest", "^release-(\d+)\.(\d+)\.(\d+)$",
                 { "release-1.8.1": (1, 8, 1) }),
             DependsVersionGetter("googletest")),
+        # libc++ matches the Clang version
+        Dependency("libcxx",
+            GithubTagReleaseLister("llvm", "llvm-project", "^llvmorg-(\d+)\.(\d+).(\d+)$",
+                { "llvmorg-11.0.0": (11, 0, 0), "llvmorg-9.0.1-rc3": None}),
+            DependsVersionGetter("native_clang")),
         Dependency("libevent",
             GithubTagReleaseLister("libevent", "libevent", "^release-(\d+)\.(\d+)\.(\d+)-stable$",
                 { "release-2.0.22-stable": (2, 0, 22), "release-2.1.9-beta": None }),
@@ -69,10 +74,10 @@ def get_dependency_list():
             GithubTagReleaseLister("ccache", "ccache", "^v?(\d+)\.(\d+)(?:\.(\d+))?$",
                 { "v3.5.1": (3, 5, 1), "v3.6": (3, 6)}),
             DependsVersionGetter("native_ccache")),
-        Dependency("openssl",
-            GithubTagReleaseLister("openssl", "openssl", "^OpenSSL_(\d+)_(\d+)_(\d+)([a-z]+)?$",
-                { "OpenSSL_1_1_1b": (1, 1, 1, 'b'), "OpenSSL_1_1_1-pre9": None }),
-            DependsVersionGetter("openssl")),
+        Dependency("native_clang",
+            GithubTagReleaseLister("llvm", "llvm-project", "^llvmorg-(\d+)\.(\d+).(\d+)$",
+                { "llvmorg-11.0.0": (11, 0, 0), "llvmorg-9.0.1-rc3": None}),
+            DependsVersionGetter("native_clang")),
         Dependency("native_rust",
             GithubTagReleaseLister("rust-lang", "rust", "^(\d+)\.(\d+)(?:\.(\d+))?$",
                 { "1.33.0": (1, 33, 0), "0.9": (0, 9) }),
@@ -139,12 +144,17 @@ def get_dependency_list():
         else:
             crate_name = crate
 
-        dependencies.append(
-            Dependency("crate_" + crate,
-                RustCrateReleaseLister(crate_name),
-                DependsVersionGetter("crate_" + crate)
-            )
-        )
+        # Rust dependency checks are temporarily disabled:
+        # https://github.com/zcash/zcash/issues/4726
+        # No-op statement to keep pyflakes happy:
+        crate_name = crate_name
+
+        # dependencies.append(
+        #     Dependency("crate_" + crate,
+        #         RustCrateReleaseLister(crate_name),
+        #         DependsVersionGetter("crate_" + crate)
+        #     )
+        # )
 
     return dependencies
 
@@ -293,7 +303,7 @@ class DependsVersionGetter:
 
     def current_version(self):
         mk_file_path = os.path.join(SOURCE_ROOT, "depends", "packages", safe_depends(self.name) + ".mk")
-        mk_file = open(mk_file_path, 'r').read()
+        mk_file = open(mk_file_path, 'r', encoding='utf8').read()
 
         regexp_whitelist = [
             "package\)_version=(\d+)\.(\d+)\.(\d+)$",
@@ -319,7 +329,7 @@ class DependsVersionGetter:
 class LevelDbVersionGetter:
     def current_version(self):
         header_path = os.path.join(SOURCE_ROOT, "src", "leveldb", "include", "leveldb", "db.h")
-        header_contents = open(header_path, 'r').read()
+        header_contents = open(header_path, 'r', encoding='utf8').read()
 
         match = re.search("kMajorVersion\s*=\s*(\d+);\s*.*kMinorVersion\s*=\s*(\d+);\s*$", header_contents, re.MULTILINE)
         if match:
@@ -330,7 +340,7 @@ class LevelDbVersionGetter:
 class UnivalueVersionGetter:
     def current_version(self):
         configure_path = os.path.join(SOURCE_ROOT, "src", "univalue", "configure.ac")
-        configure_contents = open(configure_path, 'r').read()
+        configure_contents = open(configure_path, 'r', encoding='utf8').read()
 
         match = re.search("AC_INIT.*univalue.*\[(\d+)\.(\d+)\.(\d+)\]", configure_contents)
         if match:
@@ -347,7 +357,7 @@ class PostponedUpdates():
             "postponed-updates.txt"
         )
 
-        file = open(postponedlist_path, 'r')
+        file = open(postponedlist_path, 'r', encoding='utf8')
         for line in file.readlines():
             stripped = re.sub('#.*$', '', line).strip()
             if stripped != "":
@@ -393,8 +403,6 @@ def main():
     untracked = [
         # packages.mk is not a dependency, it just specifies the list of them all.
         "packages",
-        # just a template
-        "vendorcrate",
         # This package doesn't have conventional version numbers
         "native_cctools"
     ]

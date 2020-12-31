@@ -11,7 +11,9 @@
 #include "key_constants.h"
 #include <zcash/address/sapling.hpp>
 
-#include <boost/optional.hpp>
+#include <optional>
+#include <variant>
+
 
 namespace Consensus {
 
@@ -78,10 +80,10 @@ struct NetworkUpgrade {
      * scrutiny than regular releases. nMinimumChainWork MUST be set to at least the chain
      * work of this block, otherwise this detection will have false positives.
      */
-    boost::optional<uint256> hashActivationBlock;
+    std::optional<uint256> hashActivationBlock;
 };
 
-typedef boost::variant<libzcash::SaplingPaymentAddress, CScript> FundingStreamAddress;
+typedef std::variant<libzcash::SaplingPaymentAddress, CScript> FundingStreamAddress;
 
 /**
  * Index into Params.vFundingStreams.
@@ -89,12 +91,12 @@ typedef boost::variant<libzcash::SaplingPaymentAddress, CScript> FundingStreamAd
  * Being array indices, these MUST be numbered consecutively.
  */
 enum FundingStreamIndex : uint32_t {
-    FS_ZIP214_ECC,
+    FS_ZIP214_BP,
     FS_ZIP214_ZF,
     FS_ZIP214_MG,
     MAX_FUNDING_STREAMS,
 };
-const auto FIRST_FUNDING_STREAM = FS_ZIP214_ECC;
+const auto FIRST_FUNDING_STREAM = FS_ZIP214_BP;
 
 enum FundingStreamError {
     CANOPY_NOT_ACTIVE,
@@ -115,7 +117,7 @@ public:
     FundingStream(const FundingStream& fs):
         startHeight(fs.startHeight), endHeight(fs.endHeight), addresses(fs.addresses) { }
 
-    static boost::variant<FundingStream, FundingStreamError> ValidateFundingStream(
+    static std::variant<FundingStream, FundingStreamError> ValidateFundingStream(
         const Consensus::Params& params,
         const int startHeight,
         const int endHeight,
@@ -168,7 +170,7 @@ struct Params {
 
     uint256 hashGenesisBlock;
 
-    bool fCoinbaseMustBeShielded;
+    bool fCoinbaseMustBeShielded = false;
 
     /** Needs to evenly divide MAX_SUBSIDY to avoid rounding errors. */
     int nSubsidySlowStartInterval;
@@ -209,7 +211,7 @@ struct Params {
     NetworkUpgrade vUpgrades[MAX_NETWORK_UPGRADES];
 
     int nFundingPeriodLength;
-    boost::optional<FundingStream> vFundingStreams[MAX_FUNDING_STREAMS];
+    std::optional<FundingStream> vFundingStreams[MAX_FUNDING_STREAMS];
     void AddZIP207FundingStream(
         const KeyConstants& keyConstants,
         FundingStreamIndex idx,
@@ -261,7 +263,8 @@ struct Params {
     unsigned int nEquihashN = 0;
     unsigned int nEquihashK = 0;
     uint256 powLimit;
-    boost::optional<uint32_t> nPowAllowMinDifficultyBlocksAfterHeight;
+    std::optional<uint32_t> nPowAllowMinDifficultyBlocksAfterHeight;
+    bool fPowNoRetargeting;
     int64_t nPowAveragingWindow;
     int64_t nPowMaxAdjustDown;
     int64_t nPowMaxAdjustUp;

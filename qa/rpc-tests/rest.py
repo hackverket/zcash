@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# Copyright (c) 2014 The Bitcoin Core developers
+# Copyright (c) 2014-2016 The Bitcoin Core developers
 # Distributed under the MIT software license, see the accompanying
 # file COPYING or https://www.opensource.org/licenses/mit-license.php .
 
@@ -9,18 +9,17 @@
 
 from test_framework.test_framework import BitcoinTestFramework
 from test_framework.util import assert_equal, assert_greater_than, \
-    initialize_chain_clean, start_nodes, connect_nodes_bi
+    start_nodes, connect_nodes_bi
 
 import struct
 import binascii
 import json
-import io
+from io import BytesIO
 from codecs import encode
 from decimal import Decimal
 
-from http.client import HTTPConnection
-from urllib.parse import urlparse
-
+import http.client
+import urllib.parse
 
 def deser_uint256(f):
     r = 0
@@ -31,7 +30,7 @@ def deser_uint256(f):
 
 # allows simple http get calls
 def http_get_call(host, port, path, response_object = 0):
-    conn = HTTPConnection(host, port)
+    conn = http.client.HTTPConnection(host, port)
     conn.request('GET', path)
 
     if response_object:
@@ -41,7 +40,7 @@ def http_get_call(host, port, path, response_object = 0):
 
 # allows simple http post calls with a request body
 def http_post_call(host, port, path, requestdata = '', response_object = 0):
-    conn = HTTPConnection(host, port)
+    conn = http.client.HTTPConnection(host, port)
     conn.request('POST', path, requestdata)
 
     if response_object:
@@ -52,12 +51,13 @@ def http_post_call(host, port, path, requestdata = '', response_object = 0):
 class RESTTest (BitcoinTestFramework):
     FORMAT_SEPARATOR = "."
 
-    def setup_chain(self):
-        print("Initializing test directory "+self.options.tmpdir)
-        initialize_chain_clean(self.options.tmpdir, 3)
+    def __init__(self):
+        super().__init__()
+        self.setup_clean_chain = True
+        self.num_nodes = 3
 
     def setup_network(self, split=False):
-        self.nodes = start_nodes(3, self.options.tmpdir)
+        self.nodes = start_nodes(self.num_nodes, self.options.tmpdir)
         connect_nodes_bi(self.nodes,0,1)
         connect_nodes_bi(self.nodes,1,2)
         connect_nodes_bi(self.nodes,0,2)
@@ -65,7 +65,7 @@ class RESTTest (BitcoinTestFramework):
         self.sync_all()
 
     def run_test(self):
-        url = urlparse(self.nodes[0].url)
+        url = urllib.parse.urlparse(self.nodes[0].url)
         print("Mining blocks...")
 
         self.nodes[0].generate(1)
@@ -94,9 +94,9 @@ class RESTTest (BitcoinTestFramework):
                 n = vout['n']
 
 
-        ######################################
-        # GETUTXOS: query a unspent outpoint #
-        ######################################
+        #######################################
+        # GETUTXOS: query an unspent outpoint #
+        #######################################
         json_request = '/checkmempool/'+txid+'-'+str(n)
         json_string = http_get_call(url.hostname, url.port, '/rest/getutxos'+json_request+self.FORMAT_SEPARATOR+'json')
         json_obj = json.loads(json_string)
@@ -109,9 +109,9 @@ class RESTTest (BitcoinTestFramework):
         assert_equal(json_obj['utxos'][0]['value'], 0.1)
 
 
-        ################################################
-        # GETUTXOS: now query a already spent outpoint #
-        ################################################
+        #################################################
+        # GETUTXOS: now query an already spent outpoint #
+        #################################################
         json_request = '/checkmempool/'+vintx+'-0'
         json_string = http_get_call(url.hostname, url.port, '/rest/getutxos'+json_request+self.FORMAT_SEPARATOR+'json')
         json_obj = json.loads(json_string)
@@ -145,7 +145,7 @@ class RESTTest (BitcoinTestFramework):
         binaryRequest += struct.pack("i", 0);
 
         bin_response = http_post_call(url.hostname, url.port, '/rest/getutxos'+self.FORMAT_SEPARATOR+'bin', binaryRequest)
-        output = io.BytesIO()
+        output = BytesIO()
         output.write(bin_response)
         output.seek(0)
         chainHeight = struct.unpack("i", output.read(4))[0]
@@ -173,24 +173,24 @@ class RESTTest (BitcoinTestFramework):
         json_request = '/'+txid+'-'+str(n)
         json_string = http_get_call(url.hostname, url.port, '/rest/getutxos'+json_request+self.FORMAT_SEPARATOR+'json')
         json_obj = json.loads(json_string)
-        assert_equal(len(json_obj['utxos']), 0) # there should be a outpoint because it has just added to the mempool
+        assert_equal(len(json_obj['utxos']), 0) # there should be an outpoint because it has just added to the mempool
 
         json_request = '/checkmempool/'+txid+'-'+str(n)
         json_string = http_get_call(url.hostname, url.port, '/rest/getutxos'+json_request+self.FORMAT_SEPARATOR+'json')
         json_obj = json.loads(json_string)
-        assert_equal(len(json_obj['utxos']), 1) # there should be a outpoint because it has just added to the mempool
+        assert_equal(len(json_obj['utxos']), 1) # there should be an outpoint because it has just added to the mempool
 
         # do some invalid requests
         json_request = '{"checkmempool'
         response = http_post_call(url.hostname, url.port, '/rest/getutxos'+self.FORMAT_SEPARATOR+'json', json_request, True)
-        assert_equal(response.status, 500) # must be a 500 because we send a invalid json request
+        assert_equal(response.status, 500) # must be a 500 because we send an invalid json request
 
         json_request = '{"checkmempool'
         response = http_post_call(url.hostname, url.port, '/rest/getutxos'+self.FORMAT_SEPARATOR+'bin', json_request, True)
-        assert_equal(response.status, 500) # must be a 500 because we send a invalid bin request
+        assert_equal(response.status, 500) # must be a 500 because we send an invalid bin request
 
         response = http_post_call(url.hostname, url.port, '/rest/getutxos/checkmempool'+self.FORMAT_SEPARATOR+'bin', '', True)
-        assert_equal(response.status, 500) # must be a 500 because we send a invalid bin request
+        assert_equal(response.status, 500) # must be a 500 because we send an invalid bin request
 
         # test limits
         json_request = '/checkmempool/'

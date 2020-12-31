@@ -2,8 +2,8 @@
 // Distributed under the MIT software license, see the accompanying
 // file COPYING or https://www.opensource.org/licenses/mit-license.php .
 
-#ifndef TRACING_INCLUDE_H_
-#define TRACING_INCLUDE_H_
+#ifndef ZCASH_RUST_INCLUDE_TRACING_H
+#define ZCASH_RUST_INCLUDE_TRACING_H
 
 #include "rust/types.h"
 #include "tracing/map.h"
@@ -221,9 +221,9 @@ public:
     /// Use the `TracingSpan` macro instead of calling this constructor directly.
     Span(const TracingCallsite* callsite, const char* const* field_values, size_t fields_len) : inner(tracing_span_create(callsite, field_values, fields_len), tracing_span_free) {}
 
-    Span(Span& span) : inner(std::move(span.inner)) {}
+    Span(Span&& span) : inner(std::move(span.inner)) {}
     Span(const Span& span) : inner(tracing_span_clone(span.inner.get()), tracing_span_free) {}
-    Span& operator=(Span& span)
+    Span& operator=(Span&& span)
     {
         if (this != &span) {
             inner = std::move(span.inner);
@@ -338,4 +338,4 @@ public:
 /// target MUST be a static constant, and MUST be valid UTF-8 string.
 #define TracingTrace(...) TracingLog("trace", __VA_ARGS__)
 
-#endif // TRACING_INCLUDE_H_
+#endif // ZCASH_RUST_INCLUDE_TRACING_H
